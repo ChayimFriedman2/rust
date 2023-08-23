@@ -1717,6 +1717,9 @@ impl<'b, T: ?Sized> RefMut<'b, T> {
     }
 }
 
+// SAFETY: This is safe because all a `&RefMut` can do is to give `&T`s, it cannot change the borrow flags in any way.
+unsafe impl<T: ?Sized> Sync for RefMut<'_, T> {}
+
 struct BorrowRefMut<'b> {
     borrow: &'b Cell<BorrowFlag>,
 }
