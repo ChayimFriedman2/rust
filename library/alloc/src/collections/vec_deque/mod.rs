@@ -10,7 +10,7 @@
 use core::cmp::{self, Ordering};
 use core::fmt;
 use core::hash::{Hash, Hasher};
-use core::iter::{repeat_n, repeat_with, ByRefSized};
+use core::iter::{repeat_n, repeat_with, ByRefSized, ExtendUnchecked};
 use core::mem::{ManuallyDrop, SizedTypeProperties};
 use core::ops::{Index, IndexMut, Range, RangeBounds};
 use core::ptr;
@@ -158,6 +158,20 @@ impl<T, A: Allocator> VecDeque<T, A> {
     #[inline]
     fn ptr(&self) -> *mut T {
         self.buf.ptr()
+    }
+
+    /// Appends an element to the buffer.
+    ///
+    /// # Safety
+    ///
+    /// May only be called if `deque.len() < deque.capacity()`
+    #[inline]
+    unsafe fn push_unchecked(&mut self, element: T) {
+        // SAFETY: Because of the precondition, it's guaranteed that there is space
+        // in the logical array after the last element.
+        unsafe { self.buffer_write(self.to_physical_idx(self.len), element) };
+        // This can't overflow because `deque.len() < deque.capacity() <= usize::MAX`.
+        self.len += 1;
     }
 
     /// Moves an element out of the buffer
@@ -2837,6 +2851,16 @@ impl<T, A: Allocator> Extend<T> for VecDeque<T, A> {
     }
 }
 
+impl<T, A: Allocator> ExtendUnchecked<T> for VecDeque<T, A> {
+    #[inline]
+    unsafe fn extend_one_unchecked(&mut self, item: T) {
+        // SAFETY: Our preconditions ensure the space has been reserved, and `extend_reserve` is implemented correctly.
+        unsafe {
+            self.push_unchecked(item);
+        }
+    }
+}
+
 #[stable(feature = "extend_ref", since = "1.2.0")]
 impl<'a, T: 'a + Copy, A: Allocator> Extend<&'a T> for VecDeque<T, A> {
     fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
@@ -2851,6 +2875,16 @@ impl<'a, T: 'a + Copy, A: Allocator> Extend<&'a T> for VecDeque<T, A> {
     #[inline]
     fn extend_reserve(&mut self, additional: usize) {
         self.reserve(additional);
+    }
+}
+
+impl<'a, T: 'a + Copy, A: Allocator> ExtendUnchecked<&'a T> for VecDeque<T, A> {
+    #[inline]
+    unsafe fn extend_one_unchecked(&mut self, &item: &'a T) {
+        // SAFETY: Our preconditions ensure the space has been reserved, and `extend_reserve` is implemented correctly.
+        unsafe {
+            self.push_unchecked(item);
+        }
     }
 }
 

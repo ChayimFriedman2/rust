@@ -16,6 +16,9 @@ pub use self::{
     marker::{FusedIterator, TrustedLen},
 };
 
+#[doc(hidden)]
+#[unstable(feature = "extend_unchecked", issue = "none")]
+pub use self::collect::ExtendUnchecked;
 #[unstable(issue = "none", feature = "inplace_iteration")]
 pub use self::marker::InPlaceIterable;
 #[unstable(issue = "none", feature = "trusted_fused")]

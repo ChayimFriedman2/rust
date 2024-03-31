@@ -413,6 +413,9 @@ pub use self::sources::{repeat_with, RepeatWith};
 #[stable(feature = "iter_successors", since = "1.34.0")]
 pub use self::sources::{successors, Successors};
 
+#[doc(hidden)]
+#[unstable(feature = "extend_unchecked", issue = "none")]
+pub use self::traits::ExtendUnchecked;
 #[stable(feature = "fused", since = "1.26.0")]
 pub use self::traits::FusedIterator;
 #[unstable(issue = "none", feature = "inplace_iteration")]

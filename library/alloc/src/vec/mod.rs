@@ -59,7 +59,7 @@ use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hash, Hasher};
 #[cfg(not(no_global_oom_handling))]
-use core::iter;
+use core::iter::{self, ExtendUnchecked};
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop, MaybeUninit, SizedTypeProperties};
 use core::ops::{self, Index, IndexMut, Range, RangeBounds};
@@ -3000,6 +3000,19 @@ impl<T, A: Allocator> Extend<T> for Vec<T, A> {
     }
 }
 
+#[cfg(not(no_global_oom_handling))]
+impl<T, A: Allocator> ExtendUnchecked<T> for Vec<T, A> {
+    #[inline]
+    unsafe fn extend_one_unchecked(&mut self, item: T) {
+        // SAFETY: Our preconditions ensure the space has been reserved, and `extend_reserve` is implemented correctly.
+        unsafe {
+            let len = self.len();
+            ptr::write(self.as_mut_ptr().add(len), item);
+            self.set_len(len + 1);
+        }
+    }
+}
+
 impl<T, A: Allocator> Vec<T, A> {
     // leaf method to which various SpecFrom/SpecExtend implementations delegate when
     // they have no further optimizations to apply
@@ -3193,6 +3206,19 @@ impl<'a, T: Copy + 'a, A: Allocator> Extend<&'a T> for Vec<T, A> {
     #[inline]
     fn extend_reserve(&mut self, additional: usize) {
         self.reserve(additional);
+    }
+}
+
+#[cfg(not(no_global_oom_handling))]
+impl<'a, T: Copy + 'a, A: Allocator> ExtendUnchecked<&'a T> for Vec<T, A> {
+    #[inline]
+    unsafe fn extend_one_unchecked(&mut self, &item: &'a T) {
+        // SAFETY: Our preconditions ensure the space has been reserved, and `extend_reserve` is implemented correctly.
+        unsafe {
+            let len = self.len();
+            ptr::write(self.as_mut_ptr().add(len), item);
+            self.set_len(len + 1);
+        }
     }
 }
 
