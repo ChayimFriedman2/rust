@@ -1,10 +1,8 @@
 use std::fmt;
 
-use rustc_data_structures::fx::FxIndexSet;
-use rustc_span::{Symbol, sym};
-
 use super::{InlineAsmArch, InlineAsmType, ModifierInfo};
 use crate::spec::{RelocModel, Target};
+use crate::{FxIndexSet, Symbol, sym};
 
 def_reg_class! {
     RiscV RiscVInlineAsmRegClass {
@@ -55,7 +53,7 @@ impl RiscVInlineAsmRegClass {
 }
 
 pub(crate) fn is_e(target_features: &FxIndexSet<Symbol>) -> bool {
-    target_features.contains(&sym::e)
+    target_features.contains(&sym!(e))
 }
 
 fn not_e(

@@ -9,17 +9,18 @@
 
 // tidy-alphabetical-start
 #![allow(internal_features)]
+#![cfg_attr(feature = "nightly", doc(rust_logo))]
+#![cfg_attr(feature = "nightly", feature(iter_intersperse))]
+#![cfg_attr(feature = "nightly", feature(let_chains))]
+#![cfg_attr(feature = "nightly", feature(rustdoc_internals))]
 #![doc(html_root_url = "https://doc.rust-lang.org/nightly/nightly-rustc/")]
-#![doc(rust_logo)]
-#![feature(assert_matches)]
-#![feature(iter_intersperse)]
-#![feature(let_chains)]
-#![feature(rustc_attrs)]
-#![feature(rustdoc_internals)]
 #![warn(unreachable_pub)]
 // tidy-alphabetical-end
 
+use std::hash::BuildHasherDefault;
 use std::path::{Path, PathBuf};
+
+use rustc_hash::FxHasher;
 
 pub mod asm;
 pub mod callconv;
@@ -30,7 +31,10 @@ pub mod target_features;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "nightly")]
 use rustc_abi::HashStableContext;
+
+pub(crate) type FxIndexSet<T> = indexmap::IndexSet<T, BuildHasherDefault<FxHasher>>;
 
 /// The name of rustc's own place to organize libraries.
 ///
@@ -75,3 +79,51 @@ fn find_relative_libdir(sysroot: &Path) -> std::borrow::Cow<'static, str> {
         Some(libdir) => libdir.into(),
     }
 }
+
+/// A macro that expands to either `rustc_span::sym::symbol` or to `"symbol"`,
+/// so we can build on stable.
+#[cfg(feature = "nightly")]
+macro_rules! sym {
+    ($sym:ident $(,)?) => {
+        ::rustc_span::sym::$sym
+    };
+    ($sym:ident, $value:literal $(,)?) => {
+        ::rustc_span::sym::$sym
+    };
+}
+#[cfg(not(feature = "nightly"))]
+macro_rules! sym {
+    ($sym:ident $(,)?) => {
+        stringify!($sym)
+    };
+    ($sym:ident, $value:literal $(,)?) => {
+        $value
+    };
+}
+
+#[inline]
+pub(crate) fn symbol_as_str(sym: &Symbol) -> &str {
+    #[cfg(feature = "nightly")]
+    let result = sym.as_str();
+    #[cfg(not(feature = "nightly"))]
+    let result = sym;
+    result
+}
+
+/// Copy-pasted from `rustc_data_structures`, because we cannot depend on it.
+macro_rules! external_bitflags_debug {
+    ($Name:ident) => {
+        impl ::std::fmt::Debug for $Name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                ::bitflags::parser::to_writer(self, f)
+            }
+        }
+    };
+}
+
+/// A type alias that resolves to either [`rustc_span::Symbol`] or `&'static str`, so we can build on stable.
+#[cfg(feature = "nightly")]
+pub use rustc_span::Symbol;
+pub(crate) use {external_bitflags_debug, sym};
+#[cfg(not(feature = "nightly"))]
+pub type Symbol = &'static str;

@@ -2,11 +2,12 @@ use std::fmt;
 use std::str::FromStr;
 
 use rustc_abi::Size;
-use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
+use rustc_hash::FxHashMap;
+#[cfg(feature = "nightly")]
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};
-use rustc_span::Symbol;
 
 use crate::spec::{RelocModel, Target};
+use crate::{FxIndexSet, Symbol, sym, symbol_as_str};
 
 pub struct ModifierInfo {
     pub modifier: char,
@@ -26,35 +27,36 @@ macro_rules! def_reg_class {
             $class:ident,
         )*
     }) => {
-        #[derive(Copy, Clone, rustc_macros::Encodable, rustc_macros::Decodable, Debug, Eq, PartialEq, PartialOrd, Hash, rustc_macros::HashStable_Generic)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
+        #[cfg_attr(feature = "nightly", derive(rustc_macros::Encodable, rustc_macros::Decodable, rustc_macros::HashStable_Generic))]
         #[allow(non_camel_case_types)]
         pub enum $arch_regclass {
             $($class,)*
         }
 
         impl $arch_regclass {
-            pub fn name(self) -> rustc_span::Symbol {
+            pub fn name(self) -> $crate::Symbol {
                 match self {
-                    $(Self::$class => rustc_span::sym::$class,)*
+                    $(Self::$class => $crate::sym!($class),)*
                 }
             }
 
-            pub fn parse(name: rustc_span::Symbol) -> Result<Self, &'static [rustc_span::Symbol]> {
+            pub fn parse(name: $crate::Symbol) -> Result<Self, &'static [$crate::Symbol]> {
                 match name {
                     $(
-                        rustc_span::sym::$class => Ok(Self::$class),
+                        $crate::sym!($class) => Ok(Self::$class),
                     )*
-                    _ => Err(&[$(rustc_span::sym::$class),*]),
+                    _ => Err(&[$($crate::sym!($class)),*]),
                 }
             }
         }
 
-        pub(super) fn regclass_map() -> rustc_data_structures::fx::FxHashMap<
+        pub(super) fn regclass_map() -> rustc_hash::FxHashMap<
             super::InlineAsmRegClass,
-            rustc_data_structures::fx::FxIndexSet<super::InlineAsmReg>,
+            $crate::FxIndexSet<super::InlineAsmReg>,
         > {
-            use rustc_data_structures::fx::FxHashMap;
-            use rustc_data_structures::fx::FxIndexSet;
+            use ::rustc_hash::FxHashMap;
+            use $crate::FxIndexSet;
             use super::InlineAsmRegClass;
             let mut map = FxHashMap::default();
             $(
@@ -75,7 +77,8 @@ macro_rules! def_regs {
         )*
     }) => {
         #[allow(unreachable_code)]
-        #[derive(Copy, Clone, rustc_macros::Encodable, rustc_macros::Decodable, Debug, Eq, PartialEq, PartialOrd, Hash, rustc_macros::HashStable_Generic)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
+        #[cfg_attr(feature = "nightly", derive(rustc_macros::Encodable, rustc_macros::Decodable, rustc_macros::HashStable_Generic))]
         #[allow(non_camel_case_types)]
         pub enum $arch_reg {
             $($reg,)*
@@ -109,7 +112,7 @@ macro_rules! def_regs {
             pub fn validate(self,
                 _arch: super::InlineAsmArch,
                 _reloc_model: crate::spec::RelocModel,
-                _target_features: &rustc_data_structures::fx::FxIndexSet<Symbol>,
+                _target_features: &$crate::FxIndexSet<Symbol>,
                 _target: &crate::spec::Target,
                 _is_clobber: bool,
             ) -> Result<(), &'static str> {
@@ -133,11 +136,11 @@ macro_rules! def_regs {
         pub(super) fn fill_reg_map(
             _arch: super::InlineAsmArch,
             _reloc_model: crate::spec::RelocModel,
-            _target_features: &rustc_data_structures::fx::FxIndexSet<Symbol>,
+            _target_features: &$crate::FxIndexSet<Symbol>,
             _target: &crate::spec::Target,
-            _map: &mut rustc_data_structures::fx::FxHashMap<
+            _map: &mut rustc_hash::FxHashMap<
                 super::InlineAsmRegClass,
-                rustc_data_structures::fx::FxIndexSet<super::InlineAsmReg>,
+                $crate::FxIndexSet<super::InlineAsmReg>,
             >,
         ) {
             #[allow(unused_imports)]
@@ -170,7 +173,7 @@ macro_rules! types {
                     ($ty, None),
                 )*)?
                 $($(
-                    ($ty2, Some(rustc_span::sym::$feature)),
+                    ($ty2, Some($crate::sym!($feature))),
                 )*)*
             ]
         }
@@ -215,7 +218,8 @@ pub use spirv::{SpirVInlineAsmReg, SpirVInlineAsmRegClass};
 pub use wasm::{WasmInlineAsmReg, WasmInlineAsmRegClass};
 pub use x86::{X86InlineAsmReg, X86InlineAsmRegClass};
 
-#[derive(Copy, Clone, Encodable, Decodable, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "nightly", derive(Encodable, Decodable))]
 pub enum InlineAsmArch {
     X86,
     X86_64,
@@ -280,7 +284,7 @@ impl FromStr for InlineAsmArch {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
-#[derive(HashStable_Generic, Encodable, Decodable)]
+#[cfg_attr(feature = "nightly", derive(HashStable_Generic, Encodable, Decodable))]
 pub enum InlineAsmReg {
     X86(X86InlineAsmReg),
     Arm(ArmInlineAsmReg),
@@ -350,7 +354,7 @@ impl InlineAsmReg {
     pub fn parse(arch: InlineAsmArch, name: Symbol) -> Result<Self, &'static str> {
         // FIXME: use direct symbol comparison for register names
         // Use `Symbol::as_str` instead of `Symbol::with` here because `has_feature` may access `Symbol`.
-        let name = name.as_str();
+        let name = symbol_as_str(&name);
         Ok(match arch {
             InlineAsmArch::X86 | InlineAsmArch::X86_64 => Self::X86(X86InlineAsmReg::parse(name)?),
             InlineAsmArch::Arm => Self::Arm(ArmInlineAsmReg::parse(name)?),
@@ -466,7 +470,7 @@ impl InlineAsmReg {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
-#[derive(HashStable_Generic, Encodable, Decodable)]
+#[cfg_attr(feature = "nightly", derive(HashStable_Generic, Encodable, Decodable))]
 pub enum InlineAsmRegClass {
     X86(X86InlineAsmRegClass),
     Arm(ArmInlineAsmRegClass),
@@ -511,7 +515,7 @@ impl InlineAsmRegClass {
             Self::Msp430(r) => r.name(),
             Self::M68k(r) => r.name(),
             Self::CSKY(r) => r.name(),
-            Self::Err => rustc_span::sym::reg,
+            Self::Err => sym!(reg),
         }
     }
 
@@ -635,7 +639,7 @@ impl InlineAsmRegClass {
         }
     }
 
-    pub fn parse(arch: InlineAsmArch, name: Symbol) -> Result<Self, &'static [rustc_span::Symbol]> {
+    pub fn parse(arch: InlineAsmArch, name: Symbol) -> Result<Self, &'static [Symbol]> {
         Ok(match arch {
             InlineAsmArch::X86 | InlineAsmArch::X86_64 => {
                 Self::X86(X86InlineAsmRegClass::parse(name)?)
@@ -709,7 +713,7 @@ impl InlineAsmRegClass {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
-#[derive(HashStable_Generic, Encodable, Decodable)]
+#[cfg_attr(feature = "nightly", derive(HashStable_Generic, Encodable, Decodable))]
 pub enum InlineAsmRegOrRegClass {
     Reg(InlineAsmReg),
     RegClass(InlineAsmRegClass),
@@ -919,7 +923,7 @@ pub fn allocatable_registers(
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Hash)]
-#[derive(HashStable_Generic, Encodable, Decodable)]
+#[cfg_attr(feature = "nightly", derive(HashStable_Generic, Encodable, Decodable))]
 pub enum InlineAsmClobberAbi {
     X86,
     X86_64Win,
@@ -947,7 +951,7 @@ impl InlineAsmClobberAbi {
         target_features: &FxIndexSet<Symbol>,
         name: Symbol,
     ) -> Result<Self, &'static [&'static str]> {
-        let name = name.as_str();
+        let name = symbol_as_str(&name);
         match arch {
             InlineAsmArch::X86 => match name {
                 "C" | "system" | "efiapi" | "cdecl" | "stdcall" | "fastcall" => {

@@ -1,10 +1,8 @@
 use std::fmt;
 
-use rustc_data_structures::fx::FxIndexSet;
-use rustc_span::{Symbol, sym};
-
 use super::{InlineAsmArch, InlineAsmType, ModifierInfo};
 use crate::spec::{RelocModel, Target};
+use crate::{FxIndexSet, Symbol, sym};
 
 def_reg_class! {
     Arm ArmInlineAsmRegClass {
@@ -68,7 +66,8 @@ impl ArmInlineAsmRegClass {
 
 // This uses the same logic as useR7AsFramePointer in LLVM
 fn frame_pointer_is_r7(target_features: &FxIndexSet<Symbol>, target: &Target) -> bool {
-    target.is_like_osx || (!target.is_like_windows && target_features.contains(&sym::thumb_mode))
+    target.is_like_osx
+        || (!target.is_like_windows && target_features.contains(&sym!(thumb_mode, "thumb-mode")))
 }
 
 fn frame_pointer_r11(
@@ -109,8 +108,8 @@ fn not_thumb1(
     is_clobber: bool,
 ) -> Result<(), &'static str> {
     if !is_clobber
-        && target_features.contains(&sym::thumb_mode)
-        && !target_features.contains(&sym::thumb2)
+        && target_features.contains(&sym!(thumb_mode, "thumb-mode"))
+        && !target_features.contains(&sym!(thumb2))
     {
         Err("high registers (r8+) can only be used as clobbers in Thumb-1 code")
     } else {

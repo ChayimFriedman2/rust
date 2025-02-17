@@ -43,17 +43,19 @@ use std::str::FromStr;
 use std::{fmt, io};
 
 use rustc_abi::{Endian, ExternAbi, Integer, Size, TargetDataLayout, TargetDataLayoutErrors};
-use rustc_data_structures::fx::FxHashSet;
 use rustc_fs_util::try_canonicalize;
+use rustc_hash::FxHashSet;
+#[cfg(feature = "nightly")]
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};
+#[cfg(feature = "nightly")]
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
-use rustc_span::{Symbol, kw, sym};
 use serde_json::Value;
 use tracing::debug;
 
 use crate::callconv::Conv;
 use crate::json::{Json, ToJson};
 use crate::spec::crt_objects::CrtObjects;
+use crate::{Symbol, external_bitflags_debug, sym};
 
 pub mod crt_objects;
 
@@ -387,8 +389,8 @@ impl LinkerFlavor {
                 .iter()
                 .filter(|cli| compatible(**cli))
                 .map(|cli| cli.desc())
-                .intersperse(", ")
-                .collect()
+                .collect::<Vec<_>>()
+                .join(", ")
         })
     }
 
@@ -638,7 +640,7 @@ bitflags::bitflags! {
         const MINGW       = 1 << 5;
     }
 }
-rustc_data_structures::external_bitflags_debug! { LinkSelfContainedComponents }
+external_bitflags_debug! { LinkSelfContainedComponents }
 
 impl LinkSelfContainedComponents {
     /// Parses a single `-Clink-self-contained` well-known component, not a set of flags.
@@ -742,7 +744,7 @@ bitflags::bitflags! {
         const LLD = 1 << 1;
     }
 }
-rustc_data_structures::external_bitflags_debug! { LinkerFeatures }
+external_bitflags_debug! { LinkerFeatures }
 
 impl LinkerFeatures {
     /// Parses a single `-Z linker-features` well-known feature, not a set of flags.
@@ -765,13 +767,15 @@ impl LinkerFeatures {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Hash, Encodable, Decodable, HashStable_Generic)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
+#[cfg_attr(feature = "nightly", derive(Encodable, Decodable, HashStable_Generic))]
 pub enum PanicStrategy {
     Unwind,
     Abort,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Hash, Encodable, Decodable, HashStable_Generic)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
+#[cfg_attr(feature = "nightly", derive(Encodable, Decodable, HashStable_Generic))]
 pub enum OnBrokenPipe {
     Default,
     Kill,
@@ -789,8 +793,8 @@ impl PanicStrategy {
 
     pub const fn desc_symbol(&self) -> Symbol {
         match *self {
-            PanicStrategy::Unwind => sym::unwind,
-            PanicStrategy::Abort => sym::abort,
+            PanicStrategy::Unwind => sym!(unwind),
+            PanicStrategy::Abort => sym!(abort),
         }
     }
 
@@ -994,13 +998,16 @@ impl RelocModel {
     }
     pub const fn desc_symbol(&self) -> Symbol {
         match *self {
-            RelocModel::Static => kw::Static,
-            RelocModel::Pic => sym::pic,
-            RelocModel::Pie => sym::pie,
-            RelocModel::DynamicNoPic => sym::dynamic_no_pic,
-            RelocModel::Ropi => sym::ropi,
-            RelocModel::Rwpi => sym::rwpi,
-            RelocModel::RopiRwpi => sym::ropi_rwpi,
+            #[cfg(feature = "nightly")]
+            RelocModel::Static => rustc_span::kw::Static,
+            #[cfg(not(feature = "nightly"))]
+            RelocModel::Static => "static",
+            RelocModel::Pic => sym!(pic),
+            RelocModel::Pie => sym!(pie),
+            RelocModel::DynamicNoPic => sym!(dynamic_no_pic, "dynamic-no-pic"),
+            RelocModel::Ropi => sym!(ropi),
+            RelocModel::Rwpi => sym!(rwpi),
+            RelocModel::RopiRwpi => sym!(ropi_rwpi, "ropi-rwpi"),
         }
     }
 
@@ -1433,7 +1440,8 @@ impl ToJson for StackProbeType {
     }
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable, HashStable_Generic)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "nightly", derive(Encodable, Decodable, HashStable_Generic))]
 pub struct SanitizerSet(u16);
 bitflags::bitflags! {
     impl SanitizerSet: u16 {
@@ -1451,7 +1459,7 @@ bitflags::bitflags! {
         const DATAFLOW = 1 << 11;
     }
 }
-rustc_data_structures::external_bitflags_debug! { SanitizerSet }
+external_bitflags_debug! { SanitizerSet }
 
 impl SanitizerSet {
     // Taken from LLVM's sanitizer compatibility logic:
@@ -3495,6 +3503,7 @@ impl Hash for TargetTuple {
 }
 
 // Use a manual implementation to prevent encoding the target json file path in the crate metadata
+#[cfg(feature = "nightly")]
 impl<S: Encoder> Encodable<S> for TargetTuple {
     fn encode(&self, s: &mut S) {
         match self {
@@ -3511,6 +3520,7 @@ impl<S: Encoder> Encodable<S> for TargetTuple {
     }
 }
 
+#[cfg(feature = "nightly")]
 impl<D: Decoder> Decodable<D> for TargetTuple {
     fn decode(d: &mut D) -> Self {
         match d.read_u8() {

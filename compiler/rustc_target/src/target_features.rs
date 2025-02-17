@@ -1,11 +1,12 @@
 //! Declares Rust's target feature names for each target.
 //! Note that these are similar to but not always identical to LLVM's feature names,
 //! and Rust adds some features that do not correspond to LLVM features at all.
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+#[cfg(feature = "nightly")]
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
-use rustc_span::{Symbol, sym};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::spec::{FloatAbi, RustcAbi, Target};
+use crate::{Symbol, sym};
 
 /// Features that control behaviour of rustc, rather than the codegen.
 /// These exist globally and are not in the target-specific lists below.
@@ -37,6 +38,7 @@ pub enum Stability {
 }
 use Stability::*;
 
+#[cfg(feature = "nightly")]
 impl<CTX> HashStable<CTX> for Stability {
     #[inline]
     fn hash_stable(&self, hcx: &mut CTX, hasher: &mut StableHasher) {
@@ -133,46 +135,46 @@ type ImpliedFeatures = &'static [&'static str];
 
 static ARM_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("aclass", Unstable(sym::arm_target_feature), &[]),
-    ("aes", Unstable(sym::arm_target_feature), &["neon"]),
+    ("aclass", Unstable(sym!(arm_target_feature)), &[]),
+    ("aes", Unstable(sym!(arm_target_feature)), &["neon"]),
     (
         "atomics-32",
         Stability::Forbidden { reason: "unsound because it changes the ABI of atomic operations" },
         &[],
     ),
-    ("crc", Unstable(sym::arm_target_feature), &[]),
-    ("d32", Unstable(sym::arm_target_feature), &[]),
-    ("dotprod", Unstable(sym::arm_target_feature), &["neon"]),
-    ("dsp", Unstable(sym::arm_target_feature), &[]),
-    ("fp-armv8", Unstable(sym::arm_target_feature), &["vfp4"]),
-    ("fp16", Unstable(sym::arm_target_feature), &["neon"]),
-    ("fpregs", Unstable(sym::arm_target_feature), &[]),
-    ("i8mm", Unstable(sym::arm_target_feature), &["neon"]),
-    ("mclass", Unstable(sym::arm_target_feature), &[]),
-    ("neon", Unstable(sym::arm_target_feature), &["vfp3"]),
-    ("rclass", Unstable(sym::arm_target_feature), &[]),
-    ("sha2", Unstable(sym::arm_target_feature), &["neon"]),
+    ("crc", Unstable(sym!(arm_target_feature)), &[]),
+    ("d32", Unstable(sym!(arm_target_feature)), &[]),
+    ("dotprod", Unstable(sym!(arm_target_feature)), &["neon"]),
+    ("dsp", Unstable(sym!(arm_target_feature)), &[]),
+    ("fp-armv8", Unstable(sym!(arm_target_feature)), &["vfp4"]),
+    ("fp16", Unstable(sym!(arm_target_feature)), &["neon"]),
+    ("fpregs", Unstable(sym!(arm_target_feature)), &[]),
+    ("i8mm", Unstable(sym!(arm_target_feature)), &["neon"]),
+    ("mclass", Unstable(sym!(arm_target_feature)), &[]),
+    ("neon", Unstable(sym!(arm_target_feature)), &["vfp3"]),
+    ("rclass", Unstable(sym!(arm_target_feature)), &[]),
+    ("sha2", Unstable(sym!(arm_target_feature)), &["neon"]),
     // This can be *disabled* on non-`hf` targets to enable the use
     // of hardfloats while keeping the softfloat ABI.
     // FIXME before stabilization: Should we expose this as a `hard-float` target feature instead of
     // matching the odd negative feature LLVM uses?
-    ("soft-float", Unstable(sym::arm_target_feature), &[]),
+    ("soft-float", Unstable(sym!(arm_target_feature)), &[]),
     // This is needed for inline assembly, but shouldn't be stabilized as-is
     // since it should be enabled per-function using #[instruction_set], not
     // #[target_feature].
-    ("thumb-mode", Unstable(sym::arm_target_feature), &[]),
-    ("thumb2", Unstable(sym::arm_target_feature), &[]),
-    ("trustzone", Unstable(sym::arm_target_feature), &[]),
-    ("v5te", Unstable(sym::arm_target_feature), &[]),
-    ("v6", Unstable(sym::arm_target_feature), &["v5te"]),
-    ("v6k", Unstable(sym::arm_target_feature), &["v6"]),
-    ("v6t2", Unstable(sym::arm_target_feature), &["v6k", "thumb2"]),
-    ("v7", Unstable(sym::arm_target_feature), &["v6t2"]),
-    ("v8", Unstable(sym::arm_target_feature), &["v7"]),
-    ("vfp2", Unstable(sym::arm_target_feature), &[]),
-    ("vfp3", Unstable(sym::arm_target_feature), &["vfp2", "d32"]),
-    ("vfp4", Unstable(sym::arm_target_feature), &["vfp3"]),
-    ("virtualization", Unstable(sym::arm_target_feature), &[]),
+    ("thumb-mode", Unstable(sym!(arm_target_feature)), &[]),
+    ("thumb2", Unstable(sym!(arm_target_feature)), &[]),
+    ("trustzone", Unstable(sym!(arm_target_feature)), &[]),
+    ("v5te", Unstable(sym!(arm_target_feature)), &[]),
+    ("v6", Unstable(sym!(arm_target_feature)), &["v5te"]),
+    ("v6k", Unstable(sym!(arm_target_feature)), &["v6"]),
+    ("v6t2", Unstable(sym!(arm_target_feature)), &["v6k", "thumb2"]),
+    ("v7", Unstable(sym!(arm_target_feature)), &["v6t2"]),
+    ("v8", Unstable(sym!(arm_target_feature)), &["v7"]),
+    ("vfp2", Unstable(sym!(arm_target_feature)), &[]),
+    ("vfp3", Unstable(sym!(arm_target_feature)), &["vfp2", "d32"]),
+    ("vfp4", Unstable(sym!(arm_target_feature)), &["vfp3"]),
+    ("virtualization", Unstable(sym!(arm_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
@@ -187,7 +189,7 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_CRC
     ("crc", Stable, &[]),
     // FEAT_CSSC
-    ("cssc", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("cssc", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_DIT
     ("dit", Stable, &[]),
     // FEAT_DotProd
@@ -197,13 +199,13 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_DPB2
     ("dpb2", Stable, &["dpb"]),
     // FEAT_ECV
-    ("ecv", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("ecv", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_F32MM
     ("f32mm", Stable, &["sve"]),
     // FEAT_F64MM
     ("f64mm", Stable, &["sve"]),
     // FEAT_FAMINMAX
-    ("faminmax", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("faminmax", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_FCMA
     ("fcma", Stable, &["neon"]),
     // FEAT_FHM
@@ -211,24 +213,24 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_FLAGM
     ("flagm", Stable, &[]),
     // FEAT_FLAGM2
-    ("flagm2", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("flagm2", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // We forbid directly toggling just `fp-armv8`; it must be toggled with `neon`.
     ("fp-armv8", Stability::Forbidden { reason: "Rust ties `fp-armv8` to `neon`" }, &[]),
     // FEAT_FP16
     // Rust ties FP and Neon: https://github.com/rust-lang/rust/pull/91608
     ("fp16", Stable, &["neon"]),
     // FEAT_FP8
-    ("fp8", Unstable(sym::aarch64_unstable_target_feature), &["faminmax", "lut", "bf16"]),
+    ("fp8", Unstable(sym!(aarch64_unstable_target_feature)), &["faminmax", "lut", "bf16"]),
     // FEAT_FP8DOT2
-    ("fp8dot2", Unstable(sym::aarch64_unstable_target_feature), &["fp8dot4"]),
+    ("fp8dot2", Unstable(sym!(aarch64_unstable_target_feature)), &["fp8dot4"]),
     // FEAT_FP8DOT4
-    ("fp8dot4", Unstable(sym::aarch64_unstable_target_feature), &["fp8fma"]),
+    ("fp8dot4", Unstable(sym!(aarch64_unstable_target_feature)), &["fp8fma"]),
     // FEAT_FP8FMA
-    ("fp8fma", Unstable(sym::aarch64_unstable_target_feature), &["fp8"]),
+    ("fp8fma", Unstable(sym!(aarch64_unstable_target_feature)), &["fp8"]),
     // FEAT_FRINTTS
     ("frintts", Stable, &[]),
     // FEAT_HBC
-    ("hbc", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("hbc", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_I8MM
     ("i8mm", Stable, &[]),
     // FEAT_JSCVT
@@ -239,13 +241,13 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_LSE
     ("lse", Stable, &[]),
     // FEAT_LSE128
-    ("lse128", Unstable(sym::aarch64_unstable_target_feature), &["lse"]),
+    ("lse128", Unstable(sym!(aarch64_unstable_target_feature)), &["lse"]),
     // FEAT_LSE2
-    ("lse2", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("lse2", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_LUT
-    ("lut", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("lut", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_MOPS
-    ("mops", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("mops", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_MTE & FEAT_MTE2
     ("mte", Stable, &[]),
     // FEAT_AdvSimd & FEAT_FP
@@ -257,7 +259,7 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_PAN
     ("pan", Stable, &[]),
     // FEAT_PAuth_LR
-    ("pauth-lr", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("pauth-lr", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_PMUv3
     ("pmuv3", Stable, &[]),
     // FEAT_RNG
@@ -269,7 +271,7 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_LRCPC2
     ("rcpc2", Stable, &["rcpc"]),
     // FEAT_LRCPC3
-    ("rcpc3", Unstable(sym::aarch64_unstable_target_feature), &["rcpc2"]),
+    ("rcpc3", Unstable(sym!(aarch64_unstable_target_feature)), &["rcpc2"]),
     // FEAT_RDM
     ("rdm", Stable, &["neon"]),
     // This is needed for inline assembly, but shouldn't be stabilized as-is
@@ -277,7 +279,7 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // #[target_feature].
     // Note that cfg(target_feature = "reserve-x18") is currently not set for
     // targets that reserve x18 by default.
-    ("reserve-x18", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("reserve-x18", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_SB
     ("sb", Stable, &[]),
     // FEAT_SHA1 & FEAT_SHA256
@@ -287,37 +289,41 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_SM3 & FEAT_SM4
     ("sm4", Stable, &["neon"]),
     // FEAT_SME
-    ("sme", Unstable(sym::aarch64_unstable_target_feature), &["bf16"]),
+    ("sme", Unstable(sym!(aarch64_unstable_target_feature)), &["bf16"]),
     // FEAT_SME_B16B16
-    ("sme-b16b16", Unstable(sym::aarch64_unstable_target_feature), &["bf16", "sme2", "sve-b16b16"]),
+    (
+        "sme-b16b16",
+        Unstable(sym!(aarch64_unstable_target_feature)),
+        &["bf16", "sme2", "sve-b16b16"],
+    ),
     // FEAT_SME_F16F16
-    ("sme-f16f16", Unstable(sym::aarch64_unstable_target_feature), &["sme2"]),
+    ("sme-f16f16", Unstable(sym!(aarch64_unstable_target_feature)), &["sme2"]),
     // FEAT_SME_F64F64
-    ("sme-f64f64", Unstable(sym::aarch64_unstable_target_feature), &["sme"]),
+    ("sme-f64f64", Unstable(sym!(aarch64_unstable_target_feature)), &["sme"]),
     // FEAT_SME_F8F16
-    ("sme-f8f16", Unstable(sym::aarch64_unstable_target_feature), &["sme-f8f32"]),
+    ("sme-f8f16", Unstable(sym!(aarch64_unstable_target_feature)), &["sme-f8f32"]),
     // FEAT_SME_F8F32
-    ("sme-f8f32", Unstable(sym::aarch64_unstable_target_feature), &["sme2", "fp8"]),
+    ("sme-f8f32", Unstable(sym!(aarch64_unstable_target_feature)), &["sme2", "fp8"]),
     // FEAT_SME_FA64
-    ("sme-fa64", Unstable(sym::aarch64_unstable_target_feature), &["sme", "sve2"]),
+    ("sme-fa64", Unstable(sym!(aarch64_unstable_target_feature)), &["sme", "sve2"]),
     // FEAT_SME_I16I64
-    ("sme-i16i64", Unstable(sym::aarch64_unstable_target_feature), &["sme"]),
+    ("sme-i16i64", Unstable(sym!(aarch64_unstable_target_feature)), &["sme"]),
     // FEAT_SME_LUTv2
-    ("sme-lutv2", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("sme-lutv2", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // FEAT_SME2
-    ("sme2", Unstable(sym::aarch64_unstable_target_feature), &["sme"]),
+    ("sme2", Unstable(sym!(aarch64_unstable_target_feature)), &["sme"]),
     // FEAT_SME2p1
-    ("sme2p1", Unstable(sym::aarch64_unstable_target_feature), &["sme2"]),
+    ("sme2p1", Unstable(sym!(aarch64_unstable_target_feature)), &["sme2"]),
     // FEAT_SPE
     ("spe", Stable, &[]),
     // FEAT_SSBS & FEAT_SSBS2
     ("ssbs", Stable, &[]),
     // FEAT_SSVE_FP8FDOT2
-    ("ssve-fp8dot2", Unstable(sym::aarch64_unstable_target_feature), &["ssve-fp8dot4"]),
+    ("ssve-fp8dot2", Unstable(sym!(aarch64_unstable_target_feature)), &["ssve-fp8dot4"]),
     // FEAT_SSVE_FP8FDOT4
-    ("ssve-fp8dot4", Unstable(sym::aarch64_unstable_target_feature), &["ssve-fp8fma"]),
+    ("ssve-fp8dot4", Unstable(sym!(aarch64_unstable_target_feature)), &["ssve-fp8fma"]),
     // FEAT_SSVE_FP8FMA
-    ("ssve-fp8fma", Unstable(sym::aarch64_unstable_target_feature), &["sme2", "fp8"]),
+    ("ssve-fp8fma", Unstable(sym!(aarch64_unstable_target_feature)), &["sme2", "fp8"]),
     // FEAT_SVE
     // It was decided that SVE requires Neon: https://github.com/rust-lang/rust/pull/91608
     //
@@ -327,7 +333,7 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // "For backwards compatibility, Neon and VFP are required in the latest architectures."
     ("sve", Stable, &["neon"]),
     // FEAT_SVE_B16B16 (SVE or SME Z-targeting instructions)
-    ("sve-b16b16", Unstable(sym::aarch64_unstable_target_feature), &["bf16"]),
+    ("sve-b16b16", Unstable(sym!(aarch64_unstable_target_feature)), &["bf16"]),
     // FEAT_SVE2
     ("sve2", Stable, &["sve"]),
     // FEAT_SVE_AES & FEAT_SVE_PMULL128
@@ -339,36 +345,36 @@ static AARCH64_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // FEAT_SVE2_SM4
     ("sve2-sm4", Stable, &["sve2", "sm4"]),
     // FEAT_SVE2p1
-    ("sve2p1", Unstable(sym::aarch64_unstable_target_feature), &["sve2"]),
+    ("sve2p1", Unstable(sym!(aarch64_unstable_target_feature)), &["sve2"]),
     // FEAT_TME
     ("tme", Stable, &[]),
     (
         "v8.1a",
-        Unstable(sym::aarch64_ver_target_feature),
+        Unstable(sym!(aarch64_ver_target_feature)),
         &["crc", "lse", "rdm", "pan", "lor", "vh"],
     ),
-    ("v8.2a", Unstable(sym::aarch64_ver_target_feature), &["v8.1a", "ras", "dpb"]),
+    ("v8.2a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.1a", "ras", "dpb"]),
     (
         "v8.3a",
-        Unstable(sym::aarch64_ver_target_feature),
+        Unstable(sym!(aarch64_ver_target_feature)),
         &["v8.2a", "rcpc", "paca", "pacg", "jsconv"],
     ),
-    ("v8.4a", Unstable(sym::aarch64_ver_target_feature), &["v8.3a", "dotprod", "dit", "flagm"]),
-    ("v8.5a", Unstable(sym::aarch64_ver_target_feature), &["v8.4a", "ssbs", "sb", "dpb2", "bti"]),
-    ("v8.6a", Unstable(sym::aarch64_ver_target_feature), &["v8.5a", "bf16", "i8mm"]),
-    ("v8.7a", Unstable(sym::aarch64_ver_target_feature), &["v8.6a", "wfxt"]),
-    ("v8.8a", Unstable(sym::aarch64_ver_target_feature), &["v8.7a", "hbc", "mops"]),
-    ("v8.9a", Unstable(sym::aarch64_ver_target_feature), &["v8.8a", "cssc"]),
-    ("v9.1a", Unstable(sym::aarch64_ver_target_feature), &["v9a", "v8.6a"]),
-    ("v9.2a", Unstable(sym::aarch64_ver_target_feature), &["v9.1a", "v8.7a"]),
-    ("v9.3a", Unstable(sym::aarch64_ver_target_feature), &["v9.2a", "v8.8a"]),
-    ("v9.4a", Unstable(sym::aarch64_ver_target_feature), &["v9.3a", "v8.9a"]),
-    ("v9.5a", Unstable(sym::aarch64_ver_target_feature), &["v9.4a"]),
-    ("v9a", Unstable(sym::aarch64_ver_target_feature), &["v8.5a", "sve2"]),
+    ("v8.4a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.3a", "dotprod", "dit", "flagm"]),
+    ("v8.5a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.4a", "ssbs", "sb", "dpb2", "bti"]),
+    ("v8.6a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.5a", "bf16", "i8mm"]),
+    ("v8.7a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.6a", "wfxt"]),
+    ("v8.8a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.7a", "hbc", "mops"]),
+    ("v8.9a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.8a", "cssc"]),
+    ("v9.1a", Unstable(sym!(aarch64_ver_target_feature)), &["v9a", "v8.6a"]),
+    ("v9.2a", Unstable(sym!(aarch64_ver_target_feature)), &["v9.1a", "v8.7a"]),
+    ("v9.3a", Unstable(sym!(aarch64_ver_target_feature)), &["v9.2a", "v8.8a"]),
+    ("v9.4a", Unstable(sym!(aarch64_ver_target_feature)), &["v9.3a", "v8.9a"]),
+    ("v9.5a", Unstable(sym!(aarch64_ver_target_feature)), &["v9.4a"]),
+    ("v9a", Unstable(sym!(aarch64_ver_target_feature)), &["v8.5a", "sve2"]),
     // FEAT_VHE
     ("vh", Stable, &[]),
     // FEAT_WFxT
-    ("wfxt", Unstable(sym::aarch64_unstable_target_feature), &[]),
+    ("wfxt", Unstable(sym!(aarch64_unstable_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
@@ -380,70 +386,70 @@ static X86_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
     ("adx", Stable, &[]),
     ("aes", Stable, &["sse2"]),
-    ("amx-bf16", Unstable(sym::x86_amx_intrinsics), &["amx-tile"]),
-    ("amx-complex", Unstable(sym::x86_amx_intrinsics), &["amx-tile"]),
-    ("amx-fp16", Unstable(sym::x86_amx_intrinsics), &["amx-tile"]),
-    ("amx-int8", Unstable(sym::x86_amx_intrinsics), &["amx-tile"]),
-    ("amx-tile", Unstable(sym::x86_amx_intrinsics), &[]),
+    ("amx-bf16", Unstable(sym!(x86_amx_intrinsics)), &["amx-tile"]),
+    ("amx-complex", Unstable(sym!(x86_amx_intrinsics)), &["amx-tile"]),
+    ("amx-fp16", Unstable(sym!(x86_amx_intrinsics)), &["amx-tile"]),
+    ("amx-int8", Unstable(sym!(x86_amx_intrinsics)), &["amx-tile"]),
+    ("amx-tile", Unstable(sym!(x86_amx_intrinsics)), &[]),
     ("avx", Stable, &["sse4.2"]),
     ("avx2", Stable, &["avx"]),
-    ("avx512bf16", Unstable(sym::avx512_target_feature), &["avx512bw"]),
-    ("avx512bitalg", Unstable(sym::avx512_target_feature), &["avx512bw"]),
-    ("avx512bw", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512cd", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512dq", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512f", Unstable(sym::avx512_target_feature), &["avx2", "fma", "f16c"]),
-    ("avx512fp16", Unstable(sym::avx512_target_feature), &["avx512bw", "avx512vl", "avx512dq"]),
-    ("avx512ifma", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512vbmi", Unstable(sym::avx512_target_feature), &["avx512bw"]),
-    ("avx512vbmi2", Unstable(sym::avx512_target_feature), &["avx512bw"]),
-    ("avx512vl", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512vnni", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512vp2intersect", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avx512vpopcntdq", Unstable(sym::avx512_target_feature), &["avx512f"]),
-    ("avxifma", Unstable(sym::avx512_target_feature), &["avx2"]),
-    ("avxneconvert", Unstable(sym::avx512_target_feature), &["avx2"]),
-    ("avxvnni", Unstable(sym::avx512_target_feature), &["avx2"]),
-    ("avxvnniint16", Unstable(sym::avx512_target_feature), &["avx2"]),
-    ("avxvnniint8", Unstable(sym::avx512_target_feature), &["avx2"]),
+    ("avx512bf16", Unstable(sym!(avx512_target_feature)), &["avx512bw"]),
+    ("avx512bitalg", Unstable(sym!(avx512_target_feature)), &["avx512bw"]),
+    ("avx512bw", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512cd", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512dq", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512f", Unstable(sym!(avx512_target_feature)), &["avx2", "fma", "f16c"]),
+    ("avx512fp16", Unstable(sym!(avx512_target_feature)), &["avx512bw", "avx512vl", "avx512dq"]),
+    ("avx512ifma", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512vbmi", Unstable(sym!(avx512_target_feature)), &["avx512bw"]),
+    ("avx512vbmi2", Unstable(sym!(avx512_target_feature)), &["avx512bw"]),
+    ("avx512vl", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512vnni", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512vp2intersect", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avx512vpopcntdq", Unstable(sym!(avx512_target_feature)), &["avx512f"]),
+    ("avxifma", Unstable(sym!(avx512_target_feature)), &["avx2"]),
+    ("avxneconvert", Unstable(sym!(avx512_target_feature)), &["avx2"]),
+    ("avxvnni", Unstable(sym!(avx512_target_feature)), &["avx2"]),
+    ("avxvnniint16", Unstable(sym!(avx512_target_feature)), &["avx2"]),
+    ("avxvnniint8", Unstable(sym!(avx512_target_feature)), &["avx2"]),
     ("bmi1", Stable, &[]),
     ("bmi2", Stable, &[]),
     ("cmpxchg16b", Stable, &[]),
-    ("ermsb", Unstable(sym::ermsb_target_feature), &[]),
+    ("ermsb", Unstable(sym!(ermsb_target_feature)), &[]),
     ("f16c", Stable, &["avx"]),
     ("fma", Stable, &["avx"]),
     ("fxsr", Stable, &[]),
-    ("gfni", Unstable(sym::avx512_target_feature), &["sse2"]),
-    ("kl", Unstable(sym::keylocker_x86), &["sse2"]),
-    ("lahfsahf", Unstable(sym::lahfsahf_target_feature), &[]),
+    ("gfni", Unstable(sym!(avx512_target_feature)), &["sse2"]),
+    ("kl", Unstable(sym!(keylocker_x86)), &["sse2"]),
+    ("lahfsahf", Unstable(sym!(lahfsahf_target_feature)), &[]),
     ("lzcnt", Stable, &[]),
     ("movbe", Stable, &[]),
     ("pclmulqdq", Stable, &["sse2"]),
     ("popcnt", Stable, &[]),
-    ("prfchw", Unstable(sym::prfchw_target_feature), &[]),
+    ("prfchw", Unstable(sym!(prfchw_target_feature)), &[]),
     ("rdrand", Stable, &[]),
     ("rdseed", Stable, &[]),
-    ("rtm", Unstable(sym::rtm_target_feature), &[]),
+    ("rtm", Unstable(sym!(rtm_target_feature)), &[]),
     ("sha", Stable, &["sse2"]),
-    ("sha512", Unstable(sym::sha512_sm_x86), &["avx2"]),
-    ("sm3", Unstable(sym::sha512_sm_x86), &["avx"]),
-    ("sm4", Unstable(sym::sha512_sm_x86), &["avx2"]),
+    ("sha512", Unstable(sym!(sha512_sm_x86)), &["avx2"]),
+    ("sm3", Unstable(sym!(sha512_sm_x86)), &["avx"]),
+    ("sm4", Unstable(sym!(sha512_sm_x86)), &["avx2"]),
     // This cannot actually be toggled, the ABI always fixes it, so it'd make little sense to
     // stabilize. It must be in this list for the ABI check to be able to use it.
-    ("soft-float", Stability::Unstable(sym::x87_target_feature), &[]),
+    ("soft-float", Stability::Unstable(sym!(x87_target_feature)), &[]),
     ("sse", Stable, &[]),
     ("sse2", Stable, &["sse"]),
     ("sse3", Stable, &["sse2"]),
     ("sse4.1", Stable, &["ssse3"]),
     ("sse4.2", Stable, &["sse4.1"]),
-    ("sse4a", Unstable(sym::sse4a_target_feature), &["sse3"]),
+    ("sse4a", Unstable(sym!(sse4a_target_feature)), &["sse3"]),
     ("ssse3", Stable, &["sse3"]),
-    ("tbm", Unstable(sym::tbm_target_feature), &[]),
-    ("vaes", Unstable(sym::avx512_target_feature), &["avx2", "aes"]),
-    ("vpclmulqdq", Unstable(sym::avx512_target_feature), &["avx", "pclmulqdq"]),
-    ("widekl", Unstable(sym::keylocker_x86), &["kl"]),
-    ("x87", Unstable(sym::x87_target_feature), &[]),
-    ("xop", Unstable(sym::xop_target_feature), &[/*"fma4", */ "avx", "sse4a"]),
+    ("tbm", Unstable(sym!(tbm_target_feature)), &[]),
+    ("vaes", Unstable(sym!(avx512_target_feature)), &["avx2", "aes"]),
+    ("vpclmulqdq", Unstable(sym!(avx512_target_feature)), &["avx", "pclmulqdq"]),
+    ("widekl", Unstable(sym!(keylocker_x86)), &["kl"]),
+    ("x87", Unstable(sym!(x87_target_feature)), &[]),
+    ("xop", Unstable(sym!(xop_target_feature)), &[/*"fma4", */ "avx", "sse4a"]),
     ("xsave", Stable, &[]),
     ("xsavec", Stable, &["xsave"]),
     ("xsaveopt", Stable, &["xsave"]),
@@ -453,31 +459,31 @@ static X86_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
 
 const HEXAGON_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("hvx", Unstable(sym::hexagon_target_feature), &[]),
-    ("hvx-length128b", Unstable(sym::hexagon_target_feature), &["hvx"]),
+    ("hvx", Unstable(sym!(hexagon_target_feature)), &[]),
+    ("hvx-length128b", Unstable(sym!(hexagon_target_feature)), &["hvx"]),
     // tidy-alphabetical-end
 ];
 
 static POWERPC_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("altivec", Unstable(sym::powerpc_target_feature), &[]),
-    ("partword-atomics", Unstable(sym::powerpc_target_feature), &[]),
-    ("power10-vector", Unstable(sym::powerpc_target_feature), &["power9-vector"]),
-    ("power8-altivec", Unstable(sym::powerpc_target_feature), &["altivec"]),
-    ("power8-crypto", Unstable(sym::powerpc_target_feature), &["power8-altivec"]),
-    ("power8-vector", Unstable(sym::powerpc_target_feature), &["vsx", "power8-altivec"]),
-    ("power9-altivec", Unstable(sym::powerpc_target_feature), &["power8-altivec"]),
-    ("power9-vector", Unstable(sym::powerpc_target_feature), &["power8-vector", "power9-altivec"]),
-    ("quadword-atomics", Unstable(sym::powerpc_target_feature), &[]),
-    ("vsx", Unstable(sym::powerpc_target_feature), &["altivec"]),
+    ("altivec", Unstable(sym!(powerpc_target_feature)), &[]),
+    ("partword-atomics", Unstable(sym!(powerpc_target_feature)), &[]),
+    ("power10-vector", Unstable(sym!(powerpc_target_feature)), &["power9-vector"]),
+    ("power8-altivec", Unstable(sym!(powerpc_target_feature)), &["altivec"]),
+    ("power8-crypto", Unstable(sym!(powerpc_target_feature)), &["power8-altivec"]),
+    ("power8-vector", Unstable(sym!(powerpc_target_feature)), &["vsx", "power8-altivec"]),
+    ("power9-altivec", Unstable(sym!(powerpc_target_feature)), &["power8-altivec"]),
+    ("power9-vector", Unstable(sym!(powerpc_target_feature)), &["power8-vector", "power9-altivec"]),
+    ("quadword-atomics", Unstable(sym!(powerpc_target_feature)), &[]),
+    ("vsx", Unstable(sym!(powerpc_target_feature)), &["altivec"]),
     // tidy-alphabetical-end
 ];
 
 const MIPS_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("fp64", Unstable(sym::mips_target_feature), &[]),
-    ("msa", Unstable(sym::mips_target_feature), &[]),
-    ("virt", Unstable(sym::mips_target_feature), &[]),
+    ("fp64", Unstable(sym!(mips_target_feature)), &[]),
+    ("msa", Unstable(sym!(mips_target_feature)), &[]),
+    ("virt", Unstable(sym!(mips_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
@@ -485,21 +491,21 @@ static RISCV_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
     ("a", Stable, &["zaamo", "zalrsc"]),
     ("c", Stable, &[]),
-    ("d", Unstable(sym::riscv_target_feature), &["f"]),
-    ("e", Unstable(sym::riscv_target_feature), &[]),
-    ("f", Unstable(sym::riscv_target_feature), &[]),
+    ("d", Unstable(sym!(riscv_target_feature)), &["f"]),
+    ("e", Unstable(sym!(riscv_target_feature)), &[]),
+    ("f", Unstable(sym!(riscv_target_feature)), &[]),
     (
         "forced-atomics",
         Stability::Forbidden { reason: "unsound because it changes the ABI of atomic operations" },
         &[],
     ),
     ("m", Stable, &[]),
-    ("relax", Unstable(sym::riscv_target_feature), &[]),
-    ("unaligned-scalar-mem", Unstable(sym::riscv_target_feature), &[]),
-    ("v", Unstable(sym::riscv_target_feature), &[]),
-    ("zaamo", Unstable(sym::riscv_target_feature), &[]),
-    ("zabha", Unstable(sym::riscv_target_feature), &["zaamo"]),
-    ("zalrsc", Unstable(sym::riscv_target_feature), &[]),
+    ("relax", Unstable(sym!(riscv_target_feature)), &[]),
+    ("unaligned-scalar-mem", Unstable(sym!(riscv_target_feature)), &[]),
+    ("v", Unstable(sym!(riscv_target_feature)), &[]),
+    ("zaamo", Unstable(sym!(riscv_target_feature)), &[]),
+    ("zabha", Unstable(sym!(riscv_target_feature)), &["zaamo"]),
+    ("zalrsc", Unstable(sym!(riscv_target_feature)), &[]),
     ("zba", Stable, &[]),
     ("zbb", Stable, &[]),
     ("zbc", Stable, &[]),
@@ -507,12 +513,12 @@ static RISCV_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     ("zbkc", Stable, &[]),
     ("zbkx", Stable, &[]),
     ("zbs", Stable, &[]),
-    ("zdinx", Unstable(sym::riscv_target_feature), &["zfinx"]),
-    ("zfh", Unstable(sym::riscv_target_feature), &["zfhmin"]),
-    ("zfhmin", Unstable(sym::riscv_target_feature), &["f"]),
-    ("zfinx", Unstable(sym::riscv_target_feature), &[]),
-    ("zhinx", Unstable(sym::riscv_target_feature), &["zhinxmin"]),
-    ("zhinxmin", Unstable(sym::riscv_target_feature), &["zfinx"]),
+    ("zdinx", Unstable(sym!(riscv_target_feature)), &["zfinx"]),
+    ("zfh", Unstable(sym!(riscv_target_feature)), &["zfhmin"]),
+    ("zfhmin", Unstable(sym!(riscv_target_feature)), &["f"]),
+    ("zfinx", Unstable(sym!(riscv_target_feature)), &[]),
+    ("zhinx", Unstable(sym!(riscv_target_feature)), &["zhinxmin"]),
+    ("zhinxmin", Unstable(sym!(riscv_target_feature)), &["zfinx"]),
     ("zk", Stable, &["zkn", "zkr", "zkt"]),
     ("zkn", Stable, &["zbkb", "zbkc", "zbkx", "zkne", "zknd", "zknh"]),
     ("zknd", Stable, &[]),
@@ -528,9 +534,9 @@ static RISCV_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
 
 static WASM_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("atomics", Unstable(sym::wasm_target_feature), &[]),
+    ("atomics", Unstable(sym!(wasm_target_feature)), &[]),
     ("bulk-memory", Stable, &[]),
-    ("exception-handling", Unstable(sym::wasm_target_feature), &[]),
+    ("exception-handling", Unstable(sym!(wasm_target_feature)), &[]),
     ("extended-const", Stable, &[]),
     ("multivalue", Stable, &[]),
     ("mutable-globals", Stable, &[]),
@@ -540,100 +546,100 @@ static WASM_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     ("sign-ext", Stable, &[]),
     ("simd128", Stable, &[]),
     ("tail-call", Stable, &[]),
-    ("wide-arithmetic", Unstable(sym::wasm_target_feature), &[]),
+    ("wide-arithmetic", Unstable(sym!(wasm_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
 const BPF_FEATURES: &[(&str, Stability, ImpliedFeatures)] =
-    &[("alu32", Unstable(sym::bpf_target_feature), &[])];
+    &[("alu32", Unstable(sym!(bpf_target_feature)), &[])];
 
 static CSKY_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("10e60", Unstable(sym::csky_target_feature), &["7e10"]),
-    ("2e3", Unstable(sym::csky_target_feature), &["e2"]),
-    ("3e3r1", Unstable(sym::csky_target_feature), &[]),
-    ("3e3r2", Unstable(sym::csky_target_feature), &["3e3r1", "doloop"]),
-    ("3e3r3", Unstable(sym::csky_target_feature), &["doloop"]),
-    ("3e7", Unstable(sym::csky_target_feature), &["2e3"]),
-    ("7e10", Unstable(sym::csky_target_feature), &["3e7"]),
-    ("cache", Unstable(sym::csky_target_feature), &[]),
-    ("doloop", Unstable(sym::csky_target_feature), &[]),
-    ("dsp1e2", Unstable(sym::csky_target_feature), &[]),
-    ("dspe60", Unstable(sym::csky_target_feature), &[]),
-    ("e1", Unstable(sym::csky_target_feature), &["elrw"]),
-    ("e2", Unstable(sym::csky_target_feature), &["e2"]),
-    ("edsp", Unstable(sym::csky_target_feature), &[]),
-    ("elrw", Unstable(sym::csky_target_feature), &[]),
-    ("float1e2", Unstable(sym::csky_target_feature), &[]),
-    ("float1e3", Unstable(sym::csky_target_feature), &[]),
-    ("float3e4", Unstable(sym::csky_target_feature), &[]),
-    ("float7e60", Unstable(sym::csky_target_feature), &[]),
-    ("floate1", Unstable(sym::csky_target_feature), &[]),
-    ("hard-tp", Unstable(sym::csky_target_feature), &[]),
-    ("high-registers", Unstable(sym::csky_target_feature), &[]),
-    ("hwdiv", Unstable(sym::csky_target_feature), &[]),
-    ("mp", Unstable(sym::csky_target_feature), &["2e3"]),
-    ("mp1e2", Unstable(sym::csky_target_feature), &["3e7"]),
-    ("nvic", Unstable(sym::csky_target_feature), &[]),
-    ("trust", Unstable(sym::csky_target_feature), &[]),
-    ("vdsp2e60f", Unstable(sym::csky_target_feature), &[]),
-    ("vdspv1", Unstable(sym::csky_target_feature), &[]),
-    ("vdspv2", Unstable(sym::csky_target_feature), &[]),
+    ("10e60", Unstable(sym!(csky_target_feature)), &["7e10"]),
+    ("2e3", Unstable(sym!(csky_target_feature)), &["e2"]),
+    ("3e3r1", Unstable(sym!(csky_target_feature)), &[]),
+    ("3e3r2", Unstable(sym!(csky_target_feature)), &["3e3r1", "doloop"]),
+    ("3e3r3", Unstable(sym!(csky_target_feature)), &["doloop"]),
+    ("3e7", Unstable(sym!(csky_target_feature)), &["2e3"]),
+    ("7e10", Unstable(sym!(csky_target_feature)), &["3e7"]),
+    ("cache", Unstable(sym!(csky_target_feature)), &[]),
+    ("doloop", Unstable(sym!(csky_target_feature)), &[]),
+    ("dsp1e2", Unstable(sym!(csky_target_feature)), &[]),
+    ("dspe60", Unstable(sym!(csky_target_feature)), &[]),
+    ("e1", Unstable(sym!(csky_target_feature)), &["elrw"]),
+    ("e2", Unstable(sym!(csky_target_feature)), &["e2"]),
+    ("edsp", Unstable(sym!(csky_target_feature)), &[]),
+    ("elrw", Unstable(sym!(csky_target_feature)), &[]),
+    ("float1e2", Unstable(sym!(csky_target_feature)), &[]),
+    ("float1e3", Unstable(sym!(csky_target_feature)), &[]),
+    ("float3e4", Unstable(sym!(csky_target_feature)), &[]),
+    ("float7e60", Unstable(sym!(csky_target_feature)), &[]),
+    ("floate1", Unstable(sym!(csky_target_feature)), &[]),
+    ("hard-tp", Unstable(sym!(csky_target_feature)), &[]),
+    ("high-registers", Unstable(sym!(csky_target_feature)), &[]),
+    ("hwdiv", Unstable(sym!(csky_target_feature)), &[]),
+    ("mp", Unstable(sym!(csky_target_feature)), &["2e3"]),
+    ("mp1e2", Unstable(sym!(csky_target_feature)), &["3e7"]),
+    ("nvic", Unstable(sym!(csky_target_feature)), &[]),
+    ("trust", Unstable(sym!(csky_target_feature)), &[]),
+    ("vdsp2e60f", Unstable(sym!(csky_target_feature)), &[]),
+    ("vdspv1", Unstable(sym!(csky_target_feature)), &[]),
+    ("vdspv2", Unstable(sym!(csky_target_feature)), &[]),
     // tidy-alphabetical-end
     //fpu
     // tidy-alphabetical-start
-    ("fdivdu", Unstable(sym::csky_target_feature), &[]),
-    ("fpuv2_df", Unstable(sym::csky_target_feature), &[]),
-    ("fpuv2_sf", Unstable(sym::csky_target_feature), &[]),
-    ("fpuv3_df", Unstable(sym::csky_target_feature), &[]),
-    ("fpuv3_hf", Unstable(sym::csky_target_feature), &[]),
-    ("fpuv3_hi", Unstable(sym::csky_target_feature), &[]),
-    ("fpuv3_sf", Unstable(sym::csky_target_feature), &[]),
-    ("hard-float", Unstable(sym::csky_target_feature), &[]),
-    ("hard-float-abi", Unstable(sym::csky_target_feature), &[]),
+    ("fdivdu", Unstable(sym!(csky_target_feature)), &[]),
+    ("fpuv2_df", Unstable(sym!(csky_target_feature)), &[]),
+    ("fpuv2_sf", Unstable(sym!(csky_target_feature)), &[]),
+    ("fpuv3_df", Unstable(sym!(csky_target_feature)), &[]),
+    ("fpuv3_hf", Unstable(sym!(csky_target_feature)), &[]),
+    ("fpuv3_hi", Unstable(sym!(csky_target_feature)), &[]),
+    ("fpuv3_sf", Unstable(sym!(csky_target_feature)), &[]),
+    ("hard-float", Unstable(sym!(csky_target_feature)), &[]),
+    ("hard-float-abi", Unstable(sym!(csky_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
 static LOONGARCH_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("d", Unstable(sym::loongarch_target_feature), &["f"]),
-    ("f", Unstable(sym::loongarch_target_feature), &[]),
-    ("frecipe", Unstable(sym::loongarch_target_feature), &[]),
-    ("lasx", Unstable(sym::loongarch_target_feature), &["lsx"]),
-    ("lbt", Unstable(sym::loongarch_target_feature), &[]),
-    ("lsx", Unstable(sym::loongarch_target_feature), &["d"]),
-    ("lvz", Unstable(sym::loongarch_target_feature), &[]),
-    ("relax", Unstable(sym::loongarch_target_feature), &[]),
-    ("ual", Unstable(sym::loongarch_target_feature), &[]),
+    ("d", Unstable(sym!(loongarch_target_feature)), &["f"]),
+    ("f", Unstable(sym!(loongarch_target_feature)), &[]),
+    ("frecipe", Unstable(sym!(loongarch_target_feature)), &[]),
+    ("lasx", Unstable(sym!(loongarch_target_feature)), &["lsx"]),
+    ("lbt", Unstable(sym!(loongarch_target_feature)), &[]),
+    ("lsx", Unstable(sym!(loongarch_target_feature)), &["d"]),
+    ("lvz", Unstable(sym!(loongarch_target_feature)), &[]),
+    ("relax", Unstable(sym!(loongarch_target_feature)), &[]),
+    ("ual", Unstable(sym!(loongarch_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
 const IBMZ_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("backchain", Unstable(sym::s390x_target_feature), &[]),
-    ("vector", Unstable(sym::s390x_target_feature), &[]),
+    ("backchain", Unstable(sym!(s390x_target_feature)), &[]),
+    ("vector", Unstable(sym!(s390x_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
 const SPARC_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("leoncasa", Unstable(sym::sparc_target_feature), &[]),
-    ("v8plus", Unstable(sym::sparc_target_feature), &[]),
-    ("v9", Unstable(sym::sparc_target_feature), &[]),
+    ("leoncasa", Unstable(sym!(sparc_target_feature)), &[]),
+    ("v8plus", Unstable(sym!(sparc_target_feature)), &[]),
+    ("v9", Unstable(sym!(sparc_target_feature)), &[]),
     // tidy-alphabetical-end
 ];
 
 static M68K_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
     // tidy-alphabetical-start
-    ("isa-68000", Unstable(sym::m68k_target_feature), &[]),
-    ("isa-68010", Unstable(sym::m68k_target_feature), &["isa-68000"]),
-    ("isa-68020", Unstable(sym::m68k_target_feature), &["isa-68010"]),
-    ("isa-68030", Unstable(sym::m68k_target_feature), &["isa-68020"]),
-    ("isa-68040", Unstable(sym::m68k_target_feature), &["isa-68030", "isa-68882"]),
-    ("isa-68060", Unstable(sym::m68k_target_feature), &["isa-68040"]),
+    ("isa-68000", Unstable(sym!(m68k_target_feature)), &[]),
+    ("isa-68010", Unstable(sym!(m68k_target_feature)), &["isa-68000"]),
+    ("isa-68020", Unstable(sym!(m68k_target_feature)), &["isa-68010"]),
+    ("isa-68030", Unstable(sym!(m68k_target_feature)), &["isa-68020"]),
+    ("isa-68040", Unstable(sym!(m68k_target_feature)), &["isa-68030", "isa-68882"]),
+    ("isa-68060", Unstable(sym!(m68k_target_feature)), &["isa-68040"]),
     // FPU
-    ("isa-68881", Unstable(sym::m68k_target_feature), &[]),
-    ("isa-68882", Unstable(sym::m68k_target_feature), &["isa-68881"]),
+    ("isa-68881", Unstable(sym!(m68k_target_feature)), &[]),
+    ("isa-68882", Unstable(sym!(m68k_target_feature)), &["isa-68881"]),
     // tidy-alphabetical-end
 ];
 

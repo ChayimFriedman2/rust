@@ -1,10 +1,8 @@
 use std::fmt;
 
-use rustc_data_structures::fx::FxIndexSet;
-use rustc_span::{Symbol, sym};
-
 use super::{InlineAsmArch, InlineAsmType, ModifierInfo};
 use crate::spec::{RelocModel, Target};
+use crate::{FxIndexSet, Symbol, sym};
 
 def_reg_class! {
     AArch64 AArch64InlineAsmRegClass {
@@ -80,7 +78,7 @@ pub(crate) fn target_reserves_x18(target: &Target, target_features: &FxIndexSet<
         || target.env == "ohos"
         || target.is_like_osx
         || target.is_like_windows
-        || target_features.contains(&sym::reserve_x18)
+        || target_features.contains(&sym!(reserve_x18, "reserve-x18"))
 }
 
 fn reserved_x18(

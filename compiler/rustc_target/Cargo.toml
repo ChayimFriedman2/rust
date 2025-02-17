@@ -6,12 +6,14 @@ edition = "2021"
 [dependencies]
 # tidy-alphabetical-start
 bitflags = "2.4.1"
-rustc_abi = { path = "../rustc_abi" }
-rustc_data_structures = { path = "../rustc_data_structures" }
+indexmap = "2.4.0"
+rustc-hash = "2.0.0"
+rustc_abi = { path = "../rustc_abi", default-features = false }
+rustc_data_structures = { path = "../rustc_data_structures", optional = true }
 rustc_fs_util = { path = "../rustc_fs_util" }
-rustc_macros = { path = "../rustc_macros" }
-rustc_serialize = { path = "../rustc_serialize" }
-rustc_span = { path = "../rustc_span" }
+rustc_macros = { path = "../rustc_macros", optional = true }
+rustc_serialize = { path = "../rustc_serialize", optional = true }
+rustc_span = { path = "../rustc_span", optional = true }
 serde_json = "1.0.59"
 tracing = "0.1"
 # tidy-alphabetical-end
@@ -21,4 +23,18 @@ tracing = "0.1"
 default-features = false
 features = ["elf", "macho"]
 version = "0.36.2"
+# tidy-alphabetical-end
+
+[features]
+# tidy-alphabetical-start
+default = ["nightly"]
+# rust-analyzer depends on this crate and we therefore require it to built on a stable toolchain
+# without depending on rustc_data_structures, rustc_macros, rustc_serialize and rustc_span.
+nightly = [
+    "dep:rustc_data_structures",
+    "dep:rustc_macros",
+    "dep:rustc_serialize",
+    "dep:rustc_span",
+    "rustc_abi/nightly",
+]
 # tidy-alphabetical-end

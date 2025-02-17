@@ -1,8 +1,7 @@
 use std::fmt;
 
-use rustc_span::Symbol;
-
 use super::{InlineAsmArch, InlineAsmType, ModifierInfo};
+use crate::Symbol;
 
 def_reg_class! {
     M68k M68kInlineAsmRegClass {
