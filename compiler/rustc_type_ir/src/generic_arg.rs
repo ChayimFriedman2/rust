@@ -9,22 +9,22 @@ use crate::Interner;
     feature = "nightly",
     derive(Decodable_NoContext, Encodable_NoContext, HashStable_NoContext)
 )]
-pub enum GenericArgKind<I: Interner> {
-    Lifetime(I::Region),
-    Type(I::Ty),
-    Const(I::Const),
+pub enum GenericArgKind<'a, I: Interner + 'a> {
+    Lifetime(I::RegionRef<'a>),
+    Type(I::TyRef<'a>),
+    Const(I::ConstRef<'a>),
 }
 
-impl<I: Interner> Eq for GenericArgKind<I> {}
+impl<I: Interner> Eq for GenericArgKind<'_, I> {}
 
 #[derive_where(Clone, Copy, PartialEq, Debug; I: Interner)]
 #[cfg_attr(
     feature = "nightly",
     derive(Decodable_NoContext, Encodable_NoContext, HashStable_NoContext)
 )]
-pub enum TermKind<I: Interner> {
-    Ty(I::Ty),
-    Const(I::Const),
+pub enum TermKind<'a, I: Interner + 'a> {
+    Ty(I::TyRef<'a>),
+    Const(I::ConstRef<'a>),
 }
 
-impl<I: Interner> Eq for TermKind<I> {}
+impl<I: Interner> Eq for TermKind<'_, I> {}

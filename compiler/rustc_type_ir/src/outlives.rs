@@ -7,6 +7,7 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::data_structures::SsoHashSet;
 use crate::inherent::*;
+use crate::ir_traits::*;
 use crate::visit::{TypeSuperVisitable, TypeVisitable, TypeVisitableExt as _, TypeVisitor};
 use crate::{self as ty, Interner};
 
@@ -55,7 +56,7 @@ pub enum Component<I: Interner> {
 /// `ty0: 'a` to hold. Note that `ty0` must be a **fully resolved type**.
 pub fn push_outlives_components<I: Interner>(
     cx: I,
-    ty: I::Ty,
+    ty: I::TyRef<'_>,
     out: &mut SmallVec<[Component<I>; 4]>,
 ) {
     ty.visit_with(&mut OutlivesCollector { cx, out, visited: Default::default() });
@@ -68,11 +69,10 @@ struct OutlivesCollector<'a, I: Interner> {
 }
 
 impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
-    #[cfg(not(feature = "nightly"))]
     type Result = ();
 
-    fn visit_ty(&mut self, ty: I::Ty) -> Self::Result {
-        if !self.visited.insert(ty) {
+    fn visit_ty(&mut self, ty: I::TyRef<'_>) -> Self::Result {
+        if !self.visited.insert(ty.o()) {
             return;
         }
         // Descend through the types, looking for the various "base"
@@ -89,7 +89,7 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
                 // consistent with previous (accidental) behavior.
                 // See https://github.com/rust-lang/rust/issues/70917
                 // for further background and discussion.
-                for child in args.iter() {
+                for child in args.r().iter() {
                     match child.kind() {
                         ty::GenericArgKind::Lifetime(_) => {}
                         ty::GenericArgKind::Type(_) | ty::GenericArgKind::Const(_) => {
@@ -100,15 +100,15 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
             }
 
             ty::Closure(_, args) => {
-                args.as_closure().tupled_upvars_ty().visit_with(self);
+                args.r().as_closure().tupled_upvars_ty().visit_with(self);
             }
 
             ty::CoroutineClosure(_, args) => {
-                args.as_coroutine_closure().tupled_upvars_ty().visit_with(self);
+                args.r().as_coroutine_closure().tupled_upvars_ty().visit_with(self);
             }
 
             ty::Coroutine(_, args) => {
-                args.as_coroutine().tupled_upvars_ty().visit_with(self);
+                args.r().as_coroutine().tupled_upvars_ty().visit_with(self);
 
                 // Coroutines may not outlive a region unless the resume
                 // ty outlives a region. This is because the resume ty may
@@ -120,7 +120,7 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
                 // of `&mut Option<ResumeArgTy>`, since it is kinda like
                 // storage shared between the callee of the coroutine and the
                 // coroutine body.
-                args.as_coroutine().resume_ty().visit_with(self);
+                args.r().as_coroutine().resume_ty().visit_with(self);
 
                 // We ignore regions in the coroutine interior as we don't
                 // want these to affect region inference
@@ -133,11 +133,11 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
             // OutlivesTypeParameterEnv -- the actual checking that `X:'a`
             // is implied by the environment is done in regionck.
             ty::Param(p) => {
-                self.out.push(Component::Param(p));
+                self.out.push(Component::Param(*p));
             }
 
             ty::Placeholder(p) => {
-                self.out.push(Component::Placeholder(p));
+                self.out.push(Component::Placeholder(*p));
             }
 
             // For projections, we prefer to generate an obligation like
@@ -156,13 +156,18 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
                     // the rules OutlivesProjectionEnv,
                     // OutlivesProjectionTraitDef, and
                     // OutlivesProjectionComponents to regionck.
-                    self.out.push(Component::Alias(alias_ty));
+                    self.out.push(Component::Alias(alias_ty.clone()));
                 } else {
                     // fallback case: hard code
                     // OutlivesProjectionComponents. Continue walking
                     // through and constrain Pi.
                     let mut subcomponents = smallvec![];
-                    compute_alias_components_recursive(self.cx, kind, alias_ty, &mut subcomponents);
+                    compute_alias_components_recursive(
+                        self.cx,
+                        *kind,
+                        alias_ty,
+                        &mut subcomponents,
+                    );
                     self.out.push(Component::EscapingAlias(subcomponents.into_iter().collect()));
                 }
             }
@@ -171,7 +176,7 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
             // So, if we encounter an inference variable, just record
             // the unresolved variable as a component.
             ty::Infer(infer_ty) => {
-                self.out.push(Component::UnresolvedInferenceVariable(infer_ty));
+                self.out.push(Component::UnresolvedInferenceVariable(*infer_ty));
             }
 
             // Most types do not introduce any region binders, nor
@@ -210,9 +215,9 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
         }
     }
 
-    fn visit_region(&mut self, lt: I::Region) -> Self::Result {
+    fn visit_region(&mut self, lt: I::RegionRef<'_>) -> Self::Result {
         if !lt.is_bound() {
-            self.out.push(Component::Region(lt));
+            self.out.push(Component::Region(lt.o()));
         }
     }
 }
@@ -224,15 +229,17 @@ impl<I: Interner> TypeVisitor<I> for OutlivesCollector<'_, I> {
 pub fn compute_alias_components_recursive<I: Interner>(
     cx: I,
     kind: ty::AliasTyKind,
-    alias_ty: ty::AliasTy<I>,
+    alias_ty: &ty::AliasTy<I>,
     out: &mut SmallVec<[Component<I>; 4]>,
 ) {
     let opt_variances = cx.opt_alias_variances(kind, alias_ty.def_id);
 
     let mut visitor = OutlivesCollector { cx, out, visited: Default::default() };
 
-    for (index, child) in alias_ty.args.iter().enumerate() {
-        if opt_variances.and_then(|variances| variances.get(index)) == Some(ty::Bivariant) {
+    for (index, child) in alias_ty.args.r().iter().enumerate() {
+        if opt_variances.as_ref().and_then(|variances| variances.r().get(index))
+            == Some(ty::Bivariant)
+        {
             continue;
         }
         child.visit_with(&mut visitor);

@@ -23,7 +23,7 @@ pub struct Expr<'tcx> {
 }
 
 impl<'tcx> rustc_type_ir::inherent::ExprConst<TyCtxt<'tcx>> for Expr<'tcx> {
-    fn args(self) -> ty::GenericArgsRef<'tcx> {
+    fn args(&self) -> ty::GenericArgsRef<'tcx> {
         self.args
     }
 }

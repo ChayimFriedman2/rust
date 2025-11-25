@@ -10,6 +10,7 @@ use tracing::instrument;
 use crate::data_structures::SsoHashSet;
 use crate::fold::{FallibleTypeFolder, TypeFoldable, TypeFolder, TypeSuperFoldable};
 use crate::inherent::*;
+use crate::ir_traits::*;
 use crate::lift::Lift;
 use crate::visit::{Flags, TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor};
 use crate::{self as ty, DebruijnIndex, Interner};
@@ -23,7 +24,7 @@ use crate::{self as ty, DebruijnIndex, Interner};
 ///
 /// `Decodable` and `Encodable` are implemented for `Binder<T>` using the `impl_binder_encode_decode!` macro.
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, T)]
-#[derive_where(Copy; I: Interner, T: Copy)]
+#[derive_where(Copy; I: Interner, I::BoundVarKinds: Copy, T: Copy)]
 #[cfg_attr(feature = "nightly", derive(HashStable_NoContext))]
 pub struct Binder<I: Interner, T> {
     value: T,
@@ -59,8 +60,8 @@ macro_rules! impl_binder_encode_decode {
                 I::BoundVarKinds: rustc_serialize::Encodable<E>,
             {
                 fn encode(&self, e: &mut E) {
-                    self.bound_vars().encode(e);
-                    self.as_ref().skip_binder().encode(e);
+                    self.bound_vars.encode(e);
+                    self.skip_binder_ref().encode(e);
                 }
             }
             impl<I: Interner, D: rustc_serialize::Decoder> rustc_serialize::Decodable<D> for ty::Binder<I, $t>
@@ -107,7 +108,7 @@ where
 
     pub fn bind_with_vars(value: T, bound_vars: I::BoundVarKinds) -> Binder<I, T> {
         if cfg!(debug_assertions) {
-            let mut validator = ValidateBoundVars::new(bound_vars);
+            let mut validator = ValidateBoundVars::new(bound_vars.r());
             let _ = value.visit_with(&mut validator);
         }
         Binder { value, bound_vars }
@@ -167,24 +168,41 @@ impl<I: Interner, T> Binder<I, T> {
         self.value
     }
 
-    pub fn bound_vars(&self) -> I::BoundVarKinds {
-        self.bound_vars
+    /// Returns the value contained inside of this `for<'a>`. Accessing generic args
+    /// in the returned value is generally incorrect.
+    ///
+    /// Please read <https://rustc-dev-guide.rust-lang.org/ty_module/instantiating_binders.html>
+    /// before using this function. It is usually better to discharge the binder using
+    /// `no_bound_vars` or `instantiate_bound_regions` or something like that.
+    ///
+    /// `skip_binder` is only valid when you are either extracting data that does not reference
+    /// any generic arguments, e.g. a `DefId`, or when you're making sure you only pass the
+    /// value to things which can handle escaping bound vars.
+    ///
+    /// See existing uses of `.skip_binder()` in `rustc_trait_selection::traits::select`
+    /// or `rustc_next_trait_solver` for examples.
+    pub fn skip_binder_ref(&self) -> &T {
+        &self.value
+    }
+
+    pub fn bound_vars(&self) -> I::BoundVarKindsRef<'_> {
+        self.bound_vars.r()
     }
 
     pub fn as_ref(&self) -> Binder<I, &T> {
-        Binder { value: &self.value, bound_vars: self.bound_vars }
+        Binder { value: &self.value, bound_vars: self.bound_vars.clone() }
     }
 
     pub fn as_deref(&self) -> Binder<I, &T::Target>
     where
         T: Deref,
     {
-        Binder { value: &self.value, bound_vars: self.bound_vars }
+        Binder { value: &self.value, bound_vars: self.bound_vars.clone() }
     }
 
-    pub fn map_bound_ref<F, U: TypeVisitable<I>>(&self, f: F) -> Binder<I, U>
+    pub fn map_bound_ref<'a, F, U: TypeVisitable<I>>(&'a self, f: F) -> Binder<I, U>
     where
-        F: FnOnce(&T) -> U,
+        F: FnOnce(&'a T) -> U,
     {
         self.as_ref().map_bound(f)
     }
@@ -196,7 +214,7 @@ impl<I: Interner, T> Binder<I, T> {
         let Binder { value, bound_vars } = self;
         let value = f(value);
         if cfg!(debug_assertions) {
-            let mut validator = ValidateBoundVars::new(bound_vars);
+            let mut validator = ValidateBoundVars::new(bound_vars.r());
             let _ = value.visit_with(&mut validator);
         }
         Binder { value, bound_vars }
@@ -209,7 +227,7 @@ impl<I: Interner, T> Binder<I, T> {
         let Binder { value, bound_vars } = self;
         let value = f(value)?;
         if cfg!(debug_assertions) {
-            let mut validator = ValidateBoundVars::new(bound_vars);
+            let mut validator = ValidateBoundVars::new(bound_vars.r());
             let _ = value.visit_with(&mut validator);
         }
         Ok(Binder { value, bound_vars })
@@ -228,7 +246,7 @@ impl<I: Interner, T> Binder<I, T> {
     where
         U: TypeVisitable<I>,
     {
-        Binder::bind_with_vars(value, self.bound_vars)
+        Binder::bind_with_vars(value, self.bound_vars.clone())
     }
 
     /// Unwraps and returns the value within, but only if it contains
@@ -248,6 +266,24 @@ impl<I: Interner, T> Binder<I, T> {
         // `self.value` is equivalent to `self.skip_binder()`
         if self.value.has_escaping_bound_vars() { None } else { Some(self.skip_binder()) }
     }
+
+    /// Unwraps and returns the value within, but only if it contains
+    /// no bound vars at all. (In other words, if this binder --
+    /// and indeed any enclosing binder -- doesn't bind anything at
+    /// all.) Otherwise, returns `None`.
+    ///
+    /// (One could imagine having a method that just unwraps a single
+    /// binder, but permits late-bound vars bound by enclosing
+    /// binders, but that would require adjusting the debruijn
+    /// indices, and given the shallow binding structure we often use,
+    /// would not be that useful.)
+    pub fn no_bound_vars_ref(&self) -> Option<&T>
+    where
+        T: TypeVisitable<I>,
+    {
+        // `self.value` is equivalent to `self.skip_binder()`
+        if self.value.has_escaping_bound_vars() { None } else { Some(self.skip_binder_ref()) }
+    }
 }
 
 impl<I: Interner, T> Binder<I, Option<T>> {
@@ -260,12 +296,12 @@ impl<I: Interner, T> Binder<I, Option<T>> {
 impl<I: Interner, T: IntoIterator> Binder<I, T> {
     pub fn iter(self) -> impl Iterator<Item = Binder<I, T::Item>> {
         let Binder { value, bound_vars } = self;
-        value.into_iter().map(move |value| Binder { value, bound_vars })
+        value.into_iter().map(move |value| Binder { value, bound_vars: bound_vars.clone() })
     }
 }
 
-pub struct ValidateBoundVars<I: Interner> {
-    bound_vars: I::BoundVarKinds,
+pub struct ValidateBoundVars<'a, I: Interner + 'a> {
+    bound_vars: I::BoundVarKindsRef<'a>,
     binder_index: ty::DebruijnIndex,
     // We only cache types because any complex const will have to step through
     // a type at some point anyways. We may encounter the same variable at
@@ -273,8 +309,8 @@ pub struct ValidateBoundVars<I: Interner> {
     visited: SsoHashSet<(ty::DebruijnIndex, I::Ty)>,
 }
 
-impl<I: Interner> ValidateBoundVars<I> {
-    pub fn new(bound_vars: I::BoundVarKinds) -> Self {
+impl<'a, I: Interner> ValidateBoundVars<'a, I> {
+    pub fn new(bound_vars: I::BoundVarKindsRef<'a>) -> Self {
         ValidateBoundVars {
             bound_vars,
             binder_index: ty::INNERMOST,
@@ -283,7 +319,7 @@ impl<I: Interner> ValidateBoundVars<I> {
     }
 }
 
-impl<I: Interner> TypeVisitor<I> for ValidateBoundVars<I> {
+impl<I: Interner> TypeVisitor<I> for ValidateBoundVars<'_, I> {
     type Result = ControlFlow<()>;
 
     fn visit_binder<T: TypeVisitable<I>>(&mut self, t: &Binder<I, T>) -> Self::Result {
@@ -293,15 +329,15 @@ impl<I: Interner> TypeVisitor<I> for ValidateBoundVars<I> {
         result
     }
 
-    fn visit_ty(&mut self, t: I::Ty) -> Self::Result {
+    fn visit_ty(&mut self, t: I::TyRef<'_>) -> Self::Result {
         if t.outer_exclusive_binder() < self.binder_index
-            || !self.visited.insert((self.binder_index, t))
+            || !self.visited.insert((self.binder_index, t.o()))
         {
             return ControlFlow::Break(());
         }
         match t.kind() {
             ty::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_ty)
-                if debruijn == self.binder_index =>
+                if *debruijn == self.binder_index =>
             {
                 let idx = bound_ty.var().as_usize();
                 if self.bound_vars.len() <= idx {
@@ -315,13 +351,13 @@ impl<I: Interner> TypeVisitor<I> for ValidateBoundVars<I> {
         t.super_visit_with(self)
     }
 
-    fn visit_const(&mut self, c: I::Const) -> Self::Result {
+    fn visit_const(&mut self, c: I::ConstRef<'_>) -> Self::Result {
         if c.outer_exclusive_binder() < self.binder_index {
             return ControlFlow::Break(());
         }
         match c.kind() {
             ty::ConstKind::Bound(debruijn, bound_const)
-                if debruijn == ty::BoundVarIndexKind::Bound(self.binder_index) =>
+                if *debruijn == ty::BoundVarIndexKind::Bound(self.binder_index) =>
             {
                 let idx = bound_const.var().as_usize();
                 if self.bound_vars.len() <= idx {
@@ -335,9 +371,9 @@ impl<I: Interner> TypeVisitor<I> for ValidateBoundVars<I> {
         c.super_visit_with(self)
     }
 
-    fn visit_region(&mut self, r: I::Region) -> Self::Result {
+    fn visit_region(&mut self, r: I::RegionRef<'_>) -> Self::Result {
         match r.kind() {
-            ty::ReBound(index, br) if index == ty::BoundVarIndexKind::Bound(self.binder_index) => {
+            ty::ReBound(index, br) if *index == ty::BoundVarIndexKind::Bound(self.binder_index) => {
                 let idx = br.var().as_usize();
                 if self.bound_vars.len() <= idx {
                     panic!("Not enough bound vars: {:?} not found in {:?}", r, self.bound_vars);
@@ -389,9 +425,9 @@ impl<I: Interner, T> EarlyBinder<I, T> {
         EarlyBinder { value: &self.value, _tcx: PhantomData }
     }
 
-    pub fn map_bound_ref<F, U>(&self, f: F) -> EarlyBinder<I, U>
+    pub fn map_bound_ref<'a, F, U>(&'a self, f: F) -> EarlyBinder<I, U>
     where
-        F: FnOnce(&T) -> U,
+        F: FnOnce(&'a T) -> U,
     {
         self.as_ref().map_bound(f)
     }
@@ -435,6 +471,34 @@ impl<I: Interner, T> EarlyBinder<I, T> {
     pub fn skip_binder(self) -> T {
         self.value
     }
+
+    /// Skips the binder and returns the "bound" value. Accessing generic args
+    /// in the returned value is generally incorrect.
+    ///
+    /// Please read <https://rustc-dev-guide.rust-lang.org/ty_module/early_binder.html>
+    /// before using this function.
+    ///
+    /// Only use this to extract data that does not depend on generic parameters, e.g.
+    /// to get the `DefId` of the inner value or the number of arguments ofan `FnSig`,
+    /// or while making sure to only pass the value to functions which are explicitly
+    /// set up to handle these uninstantiated generic parameters.
+    ///
+    /// To skip the binder on `x: &EarlyBinder<I, T>` to obtain `&T`, leverage
+    /// [`EarlyBinder::as_ref`](EarlyBinder::as_ref): `x.as_ref().skip_binder()`.
+    ///
+    /// See also [`Binder::skip_binder`](Binder::skip_binder), which is
+    /// the analogous operation on [`Binder`].
+    pub fn skip_binder_ref(&self) -> &T {
+        &self.value
+    }
+
+    #[inline]
+    pub fn o(self) -> EarlyBinder<I, T::Owned>
+    where
+        T: MyToOwned<I>,
+    {
+        self.map_bound(|it| it.o())
+    }
 }
 
 impl<I: Interner, T> EarlyBinder<I, Option<T>> {
@@ -447,11 +511,16 @@ impl<I: Interner, Iter: IntoIterator> EarlyBinder<I, Iter>
 where
     Iter::Item: TypeFoldable<I>,
 {
-    pub fn iter_instantiated<A>(self, cx: I, args: A) -> IterInstantiated<I, Iter, A>
+    pub fn iter_instantiated<'a, 'b, A>(
+        self,
+        cx: I,
+        args: A,
+    ) -> IterInstantiated<'a, 'b, I, Iter, A>
     where
-        A: SliceLike<Item = I::GenericArg>,
+        A: SliceLike<'a, Item = I::GenericArgRef<'b>>,
+        I: 'b,
     {
-        IterInstantiated { it: self.value.into_iter(), cx, args }
+        IterInstantiated { it: self.value.into_iter(), cx, args, _marker: PhantomData }
     }
 
     /// Similar to [`instantiate_identity`](EarlyBinder::instantiate_identity),
@@ -461,16 +530,18 @@ where
     }
 }
 
-pub struct IterInstantiated<I: Interner, Iter: IntoIterator, A> {
+pub struct IterInstantiated<'a, 'b, I: Interner, Iter: IntoIterator, A> {
     it: Iter::IntoIter,
     cx: I,
     args: A,
+    _marker: PhantomData<&'a &'b ()>,
 }
 
-impl<I: Interner, Iter: IntoIterator, A> Iterator for IterInstantiated<I, Iter, A>
+impl<'a, 'b, I: Interner + 'b, Iter: IntoIterator, A> Iterator
+    for IterInstantiated<'a, 'b, I, Iter, A>
 where
     Iter::Item: TypeFoldable<I>,
-    A: SliceLike<Item = I::GenericArg>,
+    A: SliceLike<'a, Item = I::GenericArgRef<'b>>,
 {
     type Item = Iter::Item;
 
@@ -486,11 +557,12 @@ where
     }
 }
 
-impl<I: Interner, Iter: IntoIterator, A> DoubleEndedIterator for IterInstantiated<I, Iter, A>
+impl<'a, 'b, I: Interner + 'b, Iter: IntoIterator, A> DoubleEndedIterator
+    for IterInstantiated<'a, 'b, I, Iter, A>
 where
     Iter::IntoIter: DoubleEndedIterator,
     Iter::Item: TypeFoldable<I>,
-    A: SliceLike<Item = I::GenericArg>,
+    A: SliceLike<'a, Item = I::GenericArgRef<'b>>,
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         Some(
@@ -500,27 +572,34 @@ where
     }
 }
 
-impl<I: Interner, Iter: IntoIterator, A> ExactSizeIterator for IterInstantiated<I, Iter, A>
+impl<'a, 'b, I: Interner + 'b, Iter: IntoIterator, A> ExactSizeIterator
+    for IterInstantiated<'a, 'b, I, Iter, A>
 where
     Iter::IntoIter: ExactSizeIterator,
     Iter::Item: TypeFoldable<I>,
-    A: SliceLike<Item = I::GenericArg>,
+    A: SliceLike<'a, Item = I::GenericArgRef<'b>>,
 {
 }
 
-impl<'s, I: Interner, Iter: IntoIterator> EarlyBinder<I, Iter>
+impl<I: Interner, Iter: IntoIterator> EarlyBinder<I, Iter>
 where
     Iter::Item: Deref,
     <Iter::Item as Deref>::Target: Copy + TypeFoldable<I>,
 {
-    pub fn iter_instantiated_copied(
+    pub fn iter_instantiated_copied<'a, 'b>(
         self,
         cx: I,
-        args: &'s [I::GenericArg],
-    ) -> IterInstantiatedCopied<'s, I, Iter> {
-        IterInstantiatedCopied { it: self.value.into_iter(), cx, args }
+        args: impl SliceLike<'a, Item = I::GenericArgRef<'b>>,
+    ) -> IterInstantiatedCopied<'a, 'b, I, Iter> {
+        IterInstantiatedCopied { it: self.value.into_iter(), cx, args: args.as_slice() }
     }
+}
 
+impl<I: Interner, Iter: IntoIterator> EarlyBinder<I, Iter>
+where
+    Iter::Item: Deref,
+    <Iter::Item as Deref>::Target: Copy,
+{
     /// Similar to [`instantiate_identity`](EarlyBinder::instantiate_identity),
     /// but on an iterator of values that deref to a `TypeFoldable`.
     pub fn iter_identity_copied(self) -> IterIdentityCopied<Iter> {
@@ -528,13 +607,13 @@ where
     }
 }
 
-pub struct IterInstantiatedCopied<'a, I: Interner, Iter: IntoIterator> {
+pub struct IterInstantiatedCopied<'a, 'b, I: Interner + 'b, Iter: IntoIterator> {
     it: Iter::IntoIter,
     cx: I,
-    args: &'a [I::GenericArg],
+    args: &'a [I::GenericArgRef<'b>],
 }
 
-impl<I: Interner, Iter: IntoIterator> Iterator for IterInstantiatedCopied<'_, I, Iter>
+impl<I: Interner, Iter: IntoIterator> Iterator for IterInstantiatedCopied<'_, '_, I, Iter>
 where
     Iter::Item: Deref,
     <Iter::Item as Deref>::Target: Copy + TypeFoldable<I>,
@@ -552,7 +631,8 @@ where
     }
 }
 
-impl<I: Interner, Iter: IntoIterator> DoubleEndedIterator for IterInstantiatedCopied<'_, I, Iter>
+impl<I: Interner, Iter: IntoIterator> DoubleEndedIterator
+    for IterInstantiatedCopied<'_, '_, I, Iter>
 where
     Iter::IntoIter: DoubleEndedIterator,
     Iter::Item: Deref,
@@ -565,7 +645,7 @@ where
     }
 }
 
-impl<I: Interner, Iter: IntoIterator> ExactSizeIterator for IterInstantiatedCopied<'_, I, Iter>
+impl<I: Interner, Iter: IntoIterator> ExactSizeIterator for IterInstantiatedCopied<'_, '_, I, Iter>
 where
     Iter::IntoIter: ExactSizeIterator,
     Iter::Item: Deref,
@@ -611,6 +691,66 @@ where
     <Iter::Item as Deref>::Target: Copy,
 {
 }
+
+impl<I: Interner, Iter: IntoIterator> EarlyBinder<I, Iter>
+where
+    Iter::Item: MyToOwned<I>,
+    <Iter::Item as MyToOwned<I>>::Owned: TypeFoldable<I>,
+{
+    pub fn iter_instantiated_owned<'a, 'b>(
+        self,
+        cx: I,
+        args: impl SliceLike<'a, Item = I::GenericArgRef<'b>>,
+    ) -> IterInstantiatedOwned<'a, 'b, I, Iter> {
+        IterInstantiatedOwned { it: self.value.into_iter(), cx, args: args.as_slice() }
+    }
+}
+
+pub struct IterInstantiatedOwned<'a, 'b, I: Interner + 'b, Iter: IntoIterator> {
+    it: Iter::IntoIter,
+    cx: I,
+    args: &'a [I::GenericArgRef<'b>],
+}
+
+impl<I: Interner, Iter: IntoIterator> Iterator for IterInstantiatedOwned<'_, '_, I, Iter>
+where
+    Iter::Item: MyToOwned<I>,
+    <Iter::Item as MyToOwned<I>>::Owned: TypeFoldable<I>,
+{
+    type Item = <Iter::Item as MyToOwned<I>>::Owned;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.it.next().map(|value| {
+            EarlyBinder { value: value.o(), _tcx: PhantomData }.instantiate(self.cx, self.args)
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.it.size_hint()
+    }
+}
+
+impl<I: Interner, Iter: IntoIterator> DoubleEndedIterator for IterInstantiatedOwned<'_, '_, I, Iter>
+where
+    Iter::IntoIter: DoubleEndedIterator,
+    Iter::Item: MyToOwned<I>,
+    <Iter::Item as MyToOwned<I>>::Owned: TypeFoldable<I>,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.it.next_back().map(|value| {
+            EarlyBinder { value: value.o(), _tcx: PhantomData }.instantiate(self.cx, self.args)
+        })
+    }
+}
+
+impl<I: Interner, Iter: IntoIterator> ExactSizeIterator for IterInstantiatedOwned<'_, '_, I, Iter>
+where
+    Iter::IntoIter: ExactSizeIterator,
+    Iter::Item: MyToOwned<I>,
+    <Iter::Item as MyToOwned<I>>::Owned: TypeFoldable<I>,
+{
+}
+
 pub struct EarlyBinderIter<I, T> {
     t: T,
     _tcx: PhantomData<I>,
@@ -635,9 +775,11 @@ impl<I: Interner, T: Iterator> Iterator for EarlyBinderIter<I, T> {
 }
 
 impl<I: Interner, T: TypeFoldable<I>> ty::EarlyBinder<I, T> {
-    pub fn instantiate<A>(self, cx: I, args: A) -> T
+    pub fn instantiate<'a, 'b, A>(self, cx: I, args: A) -> T
     where
-        A: SliceLike<Item = I::GenericArg>,
+        A: SliceLike<'a, Item = I::GenericArgRef<'b>>,
+        I: 'b,
+        I::GenericArgRef<'b>: 'a,
     {
         // Nothing to fold, so let's avoid visiting things and possibly re-hashing/equating
         // them when interning. Perf testing found this to be a modest improvement.
@@ -653,7 +795,9 @@ impl<I: Interner, T: TypeFoldable<I>> ty::EarlyBinder<I, T> {
         let mut folder = ArgFolder { cx, args: args.as_slice(), binders_passed: 0 };
         self.value.fold_with(&mut folder)
     }
+}
 
+impl<I: Interner, T: TypeVisitable<I>> ty::EarlyBinder<I, T> {
     /// Makes the identity replacement `T0 => T0, ..., TN => TN`.
     /// Conceptually, this converts universally bound variables into placeholders
     /// when inside of a given item.
@@ -675,15 +819,15 @@ impl<I: Interner, T: TypeFoldable<I>> ty::EarlyBinder<I, T> {
 ///////////////////////////////////////////////////////////////////////////
 // The actual instantiation engine itself is a type folder.
 
-struct ArgFolder<'a, I: Interner> {
+struct ArgFolder<'a, 'b, I: Interner + 'b> {
     cx: I,
-    args: &'a [I::GenericArg],
+    args: &'a [I::GenericArgRef<'b>],
 
     /// Number of region binders we have passed through while doing the instantiation
     binders_passed: u32,
 }
 
-impl<'a, I: Interner> TypeFolder<I> for ArgFolder<'a, I> {
+impl<'a, I: Interner> TypeFolder<I> for ArgFolder<'a, '_, I> {
     #[inline]
     fn cx(&self) -> I {
         self.cx
@@ -706,9 +850,11 @@ impl<'a, I: Interner> TypeFolder<I> for ArgFolder<'a, I> {
             ty::ReEarlyParam(data) => {
                 let rk = self.args.get(data.index() as usize).map(|arg| arg.kind());
                 match rk {
-                    Some(ty::GenericArgKind::Lifetime(lt)) => self.shift_region_through_binders(lt),
-                    Some(other) => self.region_param_expected(data, r, other),
-                    None => self.region_param_out_of_range(data, r),
+                    Some(ty::GenericArgKind::Lifetime(lt)) => {
+                        self.shift_region_through_binders(lt.o())
+                    }
+                    Some(other) => self.region_param_expected(*data, r, other),
+                    None => self.region_param_out_of_range(*data, r),
                 }
             }
             ty::ReBound(..)
@@ -727,14 +873,14 @@ impl<'a, I: Interner> TypeFolder<I> for ArgFolder<'a, I> {
         }
 
         match t.kind() {
-            ty::Param(p) => self.ty_for_param(p, t),
+            ty::Param(p) => self.ty_for_param(*p, t),
             _ => t.super_fold_with(self),
         }
     }
 
     fn fold_const(&mut self, c: I::Const) -> I::Const {
         if let ty::ConstKind::Param(p) = c.kind() {
-            self.const_for_param(p, c)
+            self.const_for_param(*p, c)
         } else {
             c.super_fold_with(self)
         }
@@ -749,12 +895,12 @@ impl<'a, I: Interner> TypeFolder<I> for ArgFolder<'a, I> {
     }
 }
 
-impl<'a, I: Interner> ArgFolder<'a, I> {
+impl<'a, I: Interner> ArgFolder<'a, '_, I> {
     fn ty_for_param(&self, p: I::ParamTy, source_ty: I::Ty) -> I::Ty {
         // Look up the type in the args. It really should be in there.
         let opt_ty = self.args.get(p.index() as usize).map(|arg| arg.kind());
         let ty = match opt_ty {
-            Some(ty::GenericArgKind::Type(ty)) => ty,
+            Some(ty::GenericArgKind::Type(ty)) => ty.o(),
             Some(kind) => self.type_param_expected(p, source_ty, kind),
             None => self.type_param_out_of_range(p, source_ty),
         };
@@ -764,7 +910,7 @@ impl<'a, I: Interner> ArgFolder<'a, I> {
 
     #[cold]
     #[inline(never)]
-    fn type_param_expected(&self, p: I::ParamTy, ty: I::Ty, kind: ty::GenericArgKind<I>) -> ! {
+    fn type_param_expected(&self, p: I::ParamTy, ty: I::Ty, kind: ty::GenericArgKind<'_, I>) -> ! {
         panic!(
             "expected type for `{:?}` ({:?}/{}) but found {:?} when instantiating, args={:?}",
             p,
@@ -791,7 +937,7 @@ impl<'a, I: Interner> ArgFolder<'a, I> {
         // Look up the const in the args. It really should be in there.
         let opt_ct = self.args.get(p.index() as usize).map(|arg| arg.kind());
         let ct = match opt_ct {
-            Some(ty::GenericArgKind::Const(ct)) => ct,
+            Some(ty::GenericArgKind::Const(ct)) => ct.o(),
             Some(kind) => self.const_param_expected(p, source_ct, kind),
             None => self.const_param_out_of_range(p, source_ct),
         };
@@ -805,7 +951,7 @@ impl<'a, I: Interner> ArgFolder<'a, I> {
         &self,
         p: I::ParamConst,
         ct: I::Const,
-        kind: ty::GenericArgKind<I>,
+        kind: ty::GenericArgKind<'_, I>,
     ) -> ! {
         panic!(
             "expected const for `{:?}` ({:?}/{}) but found {:?} when instantiating args={:?}",
@@ -835,7 +981,7 @@ impl<'a, I: Interner> ArgFolder<'a, I> {
         &self,
         ebr: I::EarlyParamRegion,
         r: I::Region,
-        kind: ty::GenericArgKind<I>,
+        kind: ty::GenericArgKind<'_, I>,
     ) -> ! {
         panic!(
             "expected region for `{:?}` ({:?}/{}) but found {:?} when instantiating args={:?}",

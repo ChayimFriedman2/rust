@@ -13,6 +13,7 @@ use rustc_type_ir_macros::{Lift_Generic, TypeFoldable_Generic, TypeVisitable_Gen
 use self::TyKind::*;
 pub use self::closure::*;
 use crate::inherent::*;
+use crate::ir_traits::*;
 #[cfg(feature = "nightly")]
 use crate::visit::TypeVisitable;
 use crate::{self as ty, BoundVarIndexKind, FloatTy, IntTy, Interner, UintTy};
@@ -55,7 +56,13 @@ impl AliasTyKind {
 /// Types written by the user start out as `hir::TyKind` and get
 /// converted to this representation using `<dyn HirTyLowerer>::lower_ty`.
 #[cfg_attr(feature = "nightly", rustc_diagnostic_item = "IrTyKind")]
-#[derive_where(Clone, Copy, Hash, PartialEq; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq; I: Interner)]
+#[derive_where(
+    Copy;
+    I: Interner,
+    I::Ty: Copy, I::Const: Copy, I::Region: Copy, I::GenericArgs: Copy,
+    I::BoundVarKinds: Copy, I::Tys: Copy, I::BoundExistentialPredicates: Copy,
+)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -257,10 +264,10 @@ pub enum TyKind<I: Interner> {
 impl<I: Interner> Eq for TyKind<I> {}
 
 impl<I: Interner> TyKind<I> {
-    pub fn fn_sig(self, interner: I) -> ty::Binder<I, ty::FnSig<I>> {
+    pub fn fn_sig(&self, interner: I) -> ty::Binder<I, ty::FnSig<I>> {
         match self {
-            ty::FnPtr(sig_tys, hdr) => sig_tys.with(hdr),
-            ty::FnDef(def_id, args) => interner.fn_sig(def_id).instantiate(interner, args),
+            ty::FnPtr(sig_tys, hdr) => sig_tys.clone().with(*hdr),
+            ty::FnDef(def_id, args) => interner.fn_sig(*def_id).instantiate(interner, args.r()),
             ty::Error(_) => {
                 // ignore errors (#54954)
                 ty::Binder::dummy(ty::FnSig {
@@ -282,7 +289,7 @@ impl<I: Interner> TyKind<I> {
     /// things like ADTs and trait objects, since even if their arguments or
     /// nested types may be further simplified, the outermost [`ty::TyKind`] or
     /// type constructor remains the same.
-    pub fn is_known_rigid(self) -> bool {
+    pub fn is_known_rigid(&self) -> bool {
         match self {
             ty::Bool
             | ty::Char
@@ -329,7 +336,7 @@ impl<I: Interner> fmt::Debug for TyKind<I> {
             Float(float) => write!(f, "{float:?}"),
             Adt(d, s) => {
                 write!(f, "{d:?}")?;
-                let mut s = s.iter();
+                let mut s = s.r().iter();
                 let first = s.next();
                 match first {
                     Some(first) => write!(f, "<{:?}", first)?,
@@ -350,7 +357,7 @@ impl<I: Interner> fmt::Debug for TyKind<I> {
             RawPtr(ty, mutbl) => write!(f, "*{} {:?}", mutbl.ptr_str(), ty),
             Ref(r, t, m) => write!(f, "&{:?} {}{:?}", r, m.prefix_str(), t),
             FnDef(d, s) => f.debug_tuple("FnDef").field(d).field(&s).finish(),
-            FnPtr(sig_tys, hdr) => write!(f, "{:?}", sig_tys.with(*hdr)),
+            FnPtr(sig_tys, hdr) => write!(f, "{:?}", sig_tys.clone().with(*hdr)),
             // FIXME(unsafe_binder): print this like `unsafe<'a> T<'a>`.
             UnsafeBinder(binder) => write!(f, "{:?}", binder),
             Dynamic(p, r) => write!(f, "dyn {p:?} + {r:?}"),
@@ -362,7 +369,7 @@ impl<I: Interner> fmt::Debug for TyKind<I> {
             Tuple(t) => {
                 write!(f, "(")?;
                 let mut count = 0;
-                for ty in t.iter() {
+                for ty in t.r().iter() {
                     if count > 0 {
                         write!(f, ", ")?;
                     }
@@ -390,7 +397,8 @@ impl<I: Interner> fmt::Debug for TyKind<I> {
 /// * For a projection, this would be `<Ty as Trait<...>>::N<...>`.
 /// * For an inherent projection, this would be `Ty::N<...>`.
 /// * For an opaque type, there is no explicit syntax.
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Copy; I: Interner, I::GenericArgs: Copy)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
 #[cfg_attr(
     feature = "nightly",
@@ -430,7 +438,7 @@ impl<I: Interner> Eq for AliasTy<I> {}
 
 impl<I: Interner> AliasTy<I> {
     pub fn new_from_args(interner: I, def_id: I::DefId, args: I::GenericArgs) -> AliasTy<I> {
-        interner.debug_assert_args_compatible(def_id, args);
+        interner.debug_assert_args_compatible(def_id, args.r());
         AliasTy { def_id, args, _use_alias_ty_new_instead: () }
     }
 
@@ -443,12 +451,12 @@ impl<I: Interner> AliasTy<I> {
         Self::new_from_args(interner, def_id, args)
     }
 
-    pub fn kind(self, interner: I) -> AliasTyKind {
+    pub fn kind(&self, interner: I) -> AliasTyKind {
         interner.alias_ty_kind(self)
     }
 
     /// Whether this alias type is an opaque.
-    pub fn is_opaque(self, interner: I) -> bool {
+    pub fn is_opaque(&self, interner: I) -> bool {
         matches!(self.kind(interner), AliasTyKind::Opaque)
     }
 
@@ -459,19 +467,19 @@ impl<I: Interner> AliasTy<I> {
 
 /// The following methods work only with (trait) associated type projections.
 impl<I: Interner> AliasTy<I> {
-    pub fn self_ty(self) -> I::Ty {
-        self.args.type_at(0)
+    pub fn self_ty(&self) -> I::TyRef<'_> {
+        self.args.r().type_at(0)
     }
 
-    pub fn with_replaced_self_ty(self, interner: I, self_ty: I::Ty) -> Self {
+    pub fn with_replaced_self_ty(&self, interner: I, self_ty: I::Ty) -> Self {
         AliasTy::new(
             interner,
             self.def_id,
-            [self_ty.into()].into_iter().chain(self.args.iter().skip(1)),
+            [self_ty.into()].into_iter().chain(self.args.r().iter().skip(1).map(MyToOwned::o)),
         )
     }
 
-    pub fn trait_def_id(self, interner: I) -> I::DefId {
+    pub fn trait_def_id(&self, interner: I) -> I::DefId {
         assert_eq!(self.kind(interner), AliasTyKind::Projection, "expected a projection");
         interner.parent(self.def_id)
     }
@@ -480,9 +488,12 @@ impl<I: Interner> AliasTy<I> {
     /// For example, if this is a projection of `<T as StreamingIterator>::Item<'a>`,
     /// then this function would return a `T: StreamingIterator` trait reference and
     /// `['a]` as the own args.
-    pub fn trait_ref_and_own_args(self, interner: I) -> (ty::TraitRef<I>, I::GenericArgsSlice) {
+    pub fn trait_ref_and_own_args(
+        &self,
+        interner: I,
+    ) -> (ty::TraitRef<I>, I::GenericArgsSlice<'_>) {
         debug_assert_eq!(self.kind(interner), AliasTyKind::Projection);
-        interner.trait_ref_and_own_args_for_alias(self.def_id, self.args)
+        interner.trait_ref_and_own_args_for_alias(self.def_id, self.args.r())
     }
 
     /// Extracts the underlying trait reference from this projection.
@@ -492,7 +503,7 @@ impl<I: Interner> AliasTy<I> {
     /// WARNING: This will drop the args for generic associated types
     /// consider calling [Self::trait_ref_and_own_args] to get those
     /// as well.
-    pub fn trait_ref(self, interner: I) -> ty::TraitRef<I> {
+    pub fn trait_ref(&self, interner: I) -> ty::TraitRef<I> {
         self.trait_ref_and_own_args(interner).0
     }
 }
@@ -708,7 +719,8 @@ impl fmt::Debug for InferTy {
     }
 }
 
-#[derive_where(Clone, Copy, PartialEq, Hash, Debug; I: Interner)]
+#[derive_where(Clone, PartialEq, Hash, Debug; I: Interner)]
+#[derive_where(Copy; I: Interner, I::Ty: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -721,7 +733,8 @@ pub struct TypeAndMut<I: Interner> {
 
 impl<I: Interner> Eq for TypeAndMut<I> {}
 
-#[derive_where(Clone, Copy, PartialEq, Hash; I: Interner)]
+#[derive_where(Clone, PartialEq, Hash; I: Interner)]
+#[derive_where(Copy; I: Interner, I::Tys: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -741,15 +754,15 @@ pub struct FnSig<I: Interner> {
 impl<I: Interner> Eq for FnSig<I> {}
 
 impl<I: Interner> FnSig<I> {
-    pub fn inputs(self) -> I::FnInputTys {
-        self.inputs_and_output.inputs()
+    pub fn inputs(&self) -> I::FnInputTys<'_> {
+        self.inputs_and_output.r().inputs()
     }
 
-    pub fn output(self) -> I::Ty {
-        self.inputs_and_output.output()
+    pub fn output(&self) -> I::TyRef<'_> {
+        self.inputs_and_output.r().output()
     }
 
-    pub fn is_fn_trait_compatible(self) -> bool {
+    pub fn is_fn_trait_compatible(&self) -> bool {
         let FnSig { safety, abi, c_variadic, .. } = self;
         !c_variadic && safety.is_safe() && abi.is_rust()
     }
@@ -757,14 +770,14 @@ impl<I: Interner> FnSig<I> {
 
 impl<I: Interner> ty::Binder<I, FnSig<I>> {
     #[inline]
-    pub fn inputs(self) -> ty::Binder<I, I::FnInputTys> {
-        self.map_bound(|fn_sig| fn_sig.inputs())
+    pub fn inputs(&self) -> ty::Binder<I, I::FnInputTys<'_>> {
+        self.map_bound_ref(|fn_sig| fn_sig.inputs())
     }
 
     #[inline]
     #[track_caller]
-    pub fn input(self, index: usize) -> ty::Binder<I, I::Ty> {
-        self.map_bound(|fn_sig| fn_sig.inputs().get(index).unwrap())
+    pub fn input(&self, index: usize) -> ty::Binder<I, I::TyRef<'_>> {
+        self.map_bound_ref(|fn_sig| fn_sig.inputs().get(index).unwrap())
     }
 
     pub fn inputs_and_output(self) -> ty::Binder<I, I::Tys> {
@@ -772,24 +785,24 @@ impl<I: Interner> ty::Binder<I, FnSig<I>> {
     }
 
     #[inline]
-    pub fn output(self) -> ty::Binder<I, I::Ty> {
-        self.map_bound(|fn_sig| fn_sig.output())
+    pub fn output(&self) -> ty::Binder<I, I::TyRef<'_>> {
+        self.map_bound_ref(|fn_sig| fn_sig.output())
     }
 
-    pub fn c_variadic(self) -> bool {
-        self.skip_binder().c_variadic
+    pub fn c_variadic(&self) -> bool {
+        self.skip_binder_ref().c_variadic
     }
 
-    pub fn safety(self) -> I::Safety {
-        self.skip_binder().safety
+    pub fn safety(&self) -> I::Safety {
+        self.skip_binder_ref().safety
     }
 
-    pub fn abi(self) -> I::Abi {
-        self.skip_binder().abi
+    pub fn abi(&self) -> I::Abi {
+        self.skip_binder_ref().abi
     }
 
     pub fn is_fn_trait_compatible(&self) -> bool {
-        self.skip_binder().is_fn_trait_compatible()
+        self.skip_binder_ref().is_fn_trait_compatible()
     }
 
     // Used to split a single value into the two fields in `TyKind::FnPtr`.
@@ -829,7 +842,7 @@ impl<I: Interner> fmt::Debug for FnSig<I> {
 
         let output = sig.output();
         match output.kind() {
-            Tuple(list) if list.is_empty() => Ok(()),
+            Tuple(list) if list.r().is_empty() => Ok(()),
             _ => write!(f, " -> {:?}", sig.output()),
         }
     }
@@ -837,7 +850,8 @@ impl<I: Interner> fmt::Debug for FnSig<I> {
 
 // FIXME: this is a distinct type because we need to define `Encode`/`Decode`
 // impls in this crate for `Binder<I, I::Ty>`.
-#[derive_where(Clone, Copy, PartialEq, Hash; I: Interner)]
+#[derive_where(Clone, PartialEq, Hash; I: Interner)]
+#[derive_where(Copy; I: Interner, I::Ty: Copy, I::BoundVarKinds: Copy)]
 #[cfg_attr(feature = "nightly", derive(HashStable_NoContext))]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
 pub struct UnsafeBinderInner<I: Interner>(ty::Binder<I, I::Ty>);
@@ -878,8 +892,8 @@ where
     I::BoundVarKinds: rustc_serialize::Encodable<E>,
 {
     fn encode(&self, e: &mut E) {
-        self.bound_vars().encode(e);
-        self.as_ref().skip_binder().encode(e);
+        self.bound_vars().o().encode(e);
+        self.skip_binder_ref().encode(e);
     }
 }
 
@@ -900,7 +914,8 @@ where
 }
 
 // This is just a `FnSig` without the `FnHeader` fields.
-#[derive_where(Clone, Copy, Debug, PartialEq, Hash; I: Interner)]
+#[derive_where(Clone, Debug, PartialEq, Hash; I: Interner)]
+#[derive_where(Copy; I: Interner, I::Tys: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -913,12 +928,12 @@ pub struct FnSigTys<I: Interner> {
 impl<I: Interner> Eq for FnSigTys<I> {}
 
 impl<I: Interner> FnSigTys<I> {
-    pub fn inputs(self) -> I::FnInputTys {
-        self.inputs_and_output.inputs()
+    pub fn inputs(&self) -> I::FnInputTys<'_> {
+        self.inputs_and_output.r().inputs()
     }
 
-    pub fn output(self) -> I::Ty {
-        self.inputs_and_output.output()
+    pub fn output(&self) -> I::TyRef<'_> {
+        self.inputs_and_output.r().output()
     }
 }
 
@@ -934,14 +949,14 @@ impl<I: Interner> ty::Binder<I, FnSigTys<I>> {
     }
 
     #[inline]
-    pub fn inputs(self) -> ty::Binder<I, I::FnInputTys> {
-        self.map_bound(|sig_tys| sig_tys.inputs())
+    pub fn inputs(&self) -> ty::Binder<I, I::FnInputTys<'_>> {
+        self.map_bound_ref(|sig_tys| sig_tys.inputs())
     }
 
     #[inline]
     #[track_caller]
-    pub fn input(self, index: usize) -> ty::Binder<I, I::Ty> {
-        self.map_bound(|sig_tys| sig_tys.inputs().get(index).unwrap())
+    pub fn input(&self, index: usize) -> ty::Binder<I, I::TyRef<'_>> {
+        self.map_bound_ref(|sig_tys| sig_tys.inputs().get(index).unwrap())
     }
 
     pub fn inputs_and_output(self) -> ty::Binder<I, I::Tys> {
@@ -949,8 +964,8 @@ impl<I: Interner> ty::Binder<I, FnSigTys<I>> {
     }
 
     #[inline]
-    pub fn output(self) -> ty::Binder<I, I::Ty> {
-        self.map_bound(|sig_tys| sig_tys.output())
+    pub fn output(&self) -> ty::Binder<I, I::TyRef<'_>> {
+        self.map_bound_ref(|sig_tys| sig_tys.output())
     }
 }
 
@@ -968,7 +983,8 @@ pub struct FnHeader<I: Interner> {
 
 impl<I: Interner> Eq for FnHeader<I> {}
 
-#[derive_where(Clone, Copy, Debug, PartialEq, Hash; I: Interner)]
+#[derive_where(Clone, Debug, PartialEq, Hash; I: Interner)]
+#[derive_where(Copy; I: Interner, I::Tys: Copy, I::RegionAssumptions: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)

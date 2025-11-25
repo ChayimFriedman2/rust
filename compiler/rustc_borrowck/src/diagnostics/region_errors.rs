@@ -1085,8 +1085,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
                     tupled_upvars_ty: args.tupled_upvars_ty(),
                     closure_sig_as_fn_ptr_ty,
                 },
-            )
-            .args,
+            ),
         );
 
         let Some((closure_arg_pos, _)) =

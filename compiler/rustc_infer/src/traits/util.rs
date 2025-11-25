@@ -81,17 +81,18 @@ impl<'tcx> Elaboratable<TyCtxt<'tcx>> for PredicateObligation<'tcx> {
         &self,
         clause: ty::Clause<'tcx>,
         span: Span,
-        parent_trait_pred: ty::PolyTraitPredicate<'tcx>,
+        parent_trait_pred: ty::Binder<'tcx, &ty::TraitPredicate<'tcx>>,
         index: usize,
     ) -> Self {
-        let cause = self.cause.clone().derived_cause(parent_trait_pred, |derived| {
-            ObligationCauseCode::ImplDerived(Box::new(traits::ImplDerivedCause {
-                derived,
-                impl_or_alias_def_id: parent_trait_pred.def_id(),
-                impl_def_predicate_index: Some(index),
-                span,
-            }))
-        });
+        let cause =
+            self.cause.clone().derived_cause(parent_trait_pred.map_bound(|it| *it), |derived| {
+                ObligationCauseCode::ImplDerived(Box::new(traits::ImplDerivedCause {
+                    derived,
+                    impl_or_alias_def_id: parent_trait_pred.def_id(),
+                    impl_def_predicate_index: Some(index),
+                    span,
+                }))
+            });
         Obligation {
             cause,
             param_env: self.param_env,

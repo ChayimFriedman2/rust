@@ -47,7 +47,7 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> TypeFolder<I> for EagerResolv
 
     fn fold_ty(&mut self, t: I::Ty) -> I::Ty {
         match t.kind() {
-            ty::Infer(ty::TyVar(vid)) => {
+            &ty::Infer(ty::TyVar(vid)) => {
                 let resolved = self.delegate.opportunistic_resolve_ty_var(vid);
                 if t != resolved && resolved.has_infer() {
                     resolved.fold_with(self)
@@ -55,15 +55,15 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> TypeFolder<I> for EagerResolv
                     resolved
                 }
             }
-            ty::Infer(ty::IntVar(vid)) => self.delegate.opportunistic_resolve_int_var(vid),
-            ty::Infer(ty::FloatVar(vid)) => self.delegate.opportunistic_resolve_float_var(vid),
+            &ty::Infer(ty::IntVar(vid)) => self.delegate.opportunistic_resolve_int_var(vid),
+            &ty::Infer(ty::FloatVar(vid)) => self.delegate.opportunistic_resolve_float_var(vid),
             _ => {
                 if t.has_infer() {
-                    if let Some(&ty) = self.cache.get(&t) {
-                        return ty;
+                    if let Some(ty) = self.cache.get(&t) {
+                        return ty.clone();
                     }
-                    let res = t.super_fold_with(self);
-                    assert!(self.cache.insert(t, res));
+                    let res = t.clone().super_fold_with(self);
+                    assert!(self.cache.insert(t, res.clone()));
                     res
                 } else {
                     t
@@ -74,14 +74,14 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> TypeFolder<I> for EagerResolv
 
     fn fold_region(&mut self, r: I::Region) -> I::Region {
         match r.kind() {
-            ty::ReVar(vid) => self.delegate.opportunistic_resolve_lt_var(vid),
+            &ty::ReVar(vid) => self.delegate.opportunistic_resolve_lt_var(vid),
             _ => r,
         }
     }
 
     fn fold_const(&mut self, c: I::Const) -> I::Const {
         match c.kind() {
-            ty::ConstKind::Infer(ty::InferConst::Var(vid)) => {
+            &ty::ConstKind::Infer(ty::InferConst::Var(vid)) => {
                 let resolved = self.delegate.opportunistic_resolve_ct_var(vid);
                 if c != resolved && resolved.has_infer() {
                     resolved.fold_with(self)

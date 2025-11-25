@@ -269,7 +269,7 @@ impl<'a, 'tcx> At<'a, 'tcx> {
     /// this can result in an error (e.g., if asked to compute LUB of
     /// u32 and i32), it is meaningful to call one of them the
     /// "expected type".
-    pub fn lub<T>(self, expected: T, actual: T) -> InferResult<'tcx, T>
+    pub fn lub<T>(self, expected: T, actual: T) -> InferResult<'tcx, T::RelateResult>
     where
         T: ToTrace<'tcx>,
     {

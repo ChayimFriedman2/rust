@@ -5,6 +5,7 @@
 //! 2. equate the self type, and
 //! 3. instantiate and register where clauses.
 
+use rustc_type_ir::ir_traits::*;
 use rustc_type_ir::{self as ty, Interner};
 
 use crate::delegate::SolverDelegate;
@@ -17,23 +18,23 @@ where
 {
     pub(super) fn normalize_inherent_associated_term(
         &mut self,
-        goal: Goal<I, ty::NormalizesTo<I>>,
+        goal: &Goal<I, ty::NormalizesTo<I>>,
     ) -> QueryResult<I> {
         let cx = self.cx();
-        let inherent = goal.predicate.alias;
+        let inherent = &goal.predicate.alias;
 
         let impl_def_id = cx.parent(inherent.def_id);
         let impl_args = self.fresh_args_for_item(impl_def_id);
 
         // Equate impl header and add impl where clauses
         self.eq(
-            goal.param_env,
+            goal.param_env.r(),
             inherent.self_ty(),
-            cx.type_of(impl_def_id).instantiate(cx, impl_args),
+            cx.type_of(impl_def_id).instantiate(cx, impl_args.r()).r(),
         )?;
 
         // Equate IAT with the RHS of the project goal
-        let inherent_args = inherent.rebase_inherent_args_onto_impl(impl_args, cx);
+        let inherent_args = inherent.rebase_inherent_args_onto_impl(impl_args.r(), cx);
 
         // Check both where clauses on the impl and IAT
         //
@@ -47,16 +48,16 @@ where
         self.add_goals(
             GoalSource::Misc,
             cx.predicates_of(inherent.def_id)
-                .iter_instantiated(cx, inherent_args)
+                .iter_instantiated(cx, inherent_args.r())
                 .map(|pred| goal.with(cx, pred)),
         );
 
-        let normalized = if inherent.kind(cx).is_type() {
-            cx.type_of(inherent.def_id).instantiate(cx, inherent_args).into()
+        let normalized: I::Term = if inherent.kind(cx).is_type() {
+            cx.type_of(inherent.def_id).instantiate(cx, inherent_args.r()).into()
         } else {
-            cx.const_of_item(inherent.def_id).instantiate(cx, inherent_args).into()
+            cx.const_of_item(inherent.def_id).instantiate(cx, inherent_args.r()).into()
         };
-        self.instantiate_normalizes_to_term(goal, normalized);
+        self.instantiate_normalizes_to_term(goal, normalized.r());
         self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
     }
 }

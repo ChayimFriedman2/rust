@@ -60,7 +60,7 @@ impl<'tcx> rustc_next_trait_solver::delegate::SolverDelegate for SolverDelegate<
 
     fn compute_goal_fast_path(
         &self,
-        goal: Goal<'tcx, ty::Predicate<'tcx>>,
+        goal: &Goal<'tcx, ty::Predicate<'tcx>>,
         span: Span,
     ) -> Option<Certainty> {
         if let Some(trait_pred) = goal.predicate.as_trait_clause() {
@@ -260,7 +260,7 @@ impl<'tcx> rustc_next_trait_solver::delegate::SolverDelegate for SolverDelegate<
 
     fn fetch_eligible_assoc_item(
         &self,
-        goal_trait_ref: ty::TraitRef<'tcx>,
+        goal_trait_ref: &ty::TraitRef<'tcx>,
         trait_assoc_def_id: DefId,
         impl_def_id: DefId,
     ) -> Result<Option<DefId>, ErrorGuaranteed> {
@@ -280,7 +280,7 @@ impl<'tcx> rustc_next_trait_solver::delegate::SolverDelegate for SolverDelegate<
                 | TypingMode::Borrowck { .. }
                 | TypingMode::PostBorrowckAnalysis { .. } => false,
                 TypingMode::PostAnalysis => {
-                    let poly_trait_ref = self.resolve_vars_if_possible(goal_trait_ref);
+                    let poly_trait_ref = self.resolve_vars_if_possible(*goal_trait_ref);
                     !poly_trait_ref.still_further_specializable()
                 }
             }

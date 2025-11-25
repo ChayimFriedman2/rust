@@ -39,6 +39,10 @@ pub type FnSig<'tcx> = ir::FnSig<TyCtxt<'tcx>>;
 pub type Binder<'tcx, T> = ir::Binder<TyCtxt<'tcx>, T>;
 pub type EarlyBinder<'tcx, T> = ir::EarlyBinder<TyCtxt<'tcx>, T>;
 pub type TypingMode<'tcx> = ir::TypingMode<TyCtxt<'tcx>>;
+pub type ClosureArgs<'tcx> = ir::ClosureArgs<'tcx, TyCtxt<'tcx>>;
+pub type CoroutineArgs<'tcx> = ir::CoroutineArgs<'tcx, TyCtxt<'tcx>>;
+pub type CoroutineClosureArgs<'tcx> = ir::CoroutineClosureArgs<'tcx, TyCtxt<'tcx>>;
+pub type GenSig<'tcx> = ir::GenSig<'tcx, TyCtxt<'tcx>>;
 
 pub trait Article {
     fn article(&self) -> &'static str;
@@ -59,7 +63,7 @@ impl<'tcx> Article for TyKind<'tcx> {
 }
 
 #[extension(pub trait CoroutineArgsExt<'tcx>)]
-impl<'tcx> ty::CoroutineArgs<TyCtxt<'tcx>> {
+impl<'tcx> ty::CoroutineArgs<'tcx> {
     /// Coroutine has not been resumed yet.
     const UNRESUMED: usize = 0;
     /// Coroutine has returned or is completed.
@@ -1079,14 +1083,6 @@ impl<'tcx> rustc_type_ir::inherent::Ty<TyCtxt<'tcx>> for Ty<'tcx> {
         Ty::new_tup_from_iter(interner, iter)
     }
 
-    fn tuple_fields(self) -> &'tcx ty::List<Ty<'tcx>> {
-        self.tuple_fields()
-    }
-
-    fn to_opt_closure_kind(self) -> Option<ty::ClosureKind> {
-        self.to_opt_closure_kind()
-    }
-
     fn from_closure_kind(interner: TyCtxt<'tcx>, kind: ty::ClosureKind) -> Self {
         Ty::from_closure_kind(interner, kind)
     }
@@ -1120,6 +1116,21 @@ impl<'tcx> rustc_type_ir::inherent::Ty<TyCtxt<'tcx>> for Ty<'tcx> {
 
     fn new_usize(interner: TyCtxt<'tcx>) -> Self {
         interner.types.usize
+    }
+}
+
+impl<'tcx> rustc_type_ir::inherent::AnyTy<TyCtxt<'tcx>> for Ty<'tcx> {}
+
+impl<'a, 'tcx> rustc_type_ir::inherent::TyRef<'a, TyCtxt<'tcx>> for Ty<'tcx>
+where
+    'tcx: 'a,
+{
+    fn tuple_fields(self) -> &'tcx ty::List<Ty<'tcx>> {
+        self.tuple_fields()
+    }
+
+    fn to_opt_closure_kind(self) -> Option<ty::ClosureKind> {
+        self.to_opt_closure_kind()
     }
 
     fn discriminant_ty(self, interner: TyCtxt<'tcx>) -> Ty<'tcx> {
@@ -2090,12 +2101,15 @@ impl<'tcx> Ty<'tcx> {
     /// Foo<Bar<isize>> => { Foo<Bar<isize>>, Bar<isize>, isize }
     /// [isize] => { [isize], isize }
     /// ```
-    pub fn walk(self) -> TypeWalker<TyCtxt<'tcx>> {
+    pub fn walk(self) -> TypeWalker<'tcx, TyCtxt<'tcx>> {
         TypeWalker::new(self.into())
     }
 }
 
-impl<'tcx> rustc_type_ir::inherent::Tys<TyCtxt<'tcx>> for &'tcx ty::List<Ty<'tcx>> {
+impl<'a, 'tcx> rustc_type_ir::inherent::Tys<'a, TyCtxt<'tcx>> for &'tcx ty::List<Ty<'tcx>>
+where
+    'tcx: 'a,
+{
     fn inputs(self) -> &'tcx [Ty<'tcx>] {
         self.split_last().unwrap().1
     }

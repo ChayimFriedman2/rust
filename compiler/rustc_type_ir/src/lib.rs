@@ -6,7 +6,7 @@
 #![allow(rustc::usage_of_type_ir_traits)]
 #![cfg_attr(
     feature = "nightly",
-    feature(associated_type_defaults, never_type, rustc_attrs, negative_impls)
+    feature(associated_type_defaults, never_type, rustc_attrs, negative_impls, sized_hierarchy)
 )]
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 // tidy-alphabetical-end
@@ -34,6 +34,7 @@ pub mod relate;
 pub mod search_graph;
 pub mod solve;
 pub mod walk;
+pub mod ir_traits;
 
 // These modules are not `pub` since they are glob-imported.
 #[macro_use]

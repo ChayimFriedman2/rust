@@ -105,14 +105,37 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type Span = Span;
 
     type GenericArgs = ty::GenericArgsRef<'tcx>;
+    type GenericArgsRef<'a>
+        = Self::GenericArgs
+    where
+        'tcx: 'a;
 
-    type GenericArgsSlice = &'tcx [ty::GenericArg<'tcx>];
+    type GenericArgsSlice<'a>
+        = &'tcx [ty::GenericArg<'tcx>]
+    where
+        Self: 'a;
     type GenericArg = ty::GenericArg<'tcx>;
+    type GenericArgRef<'a>
+        = Self::GenericArg
+    where
+        Self: 'a;
     type Term = ty::Term<'tcx>;
+    type TermRef<'a>
+        = Self::Term
+    where
+        Self: 'a;
     type BoundVarKinds = &'tcx List<ty::BoundVariableKind>;
+    type BoundVarKindsRef<'a>
+        = Self::BoundVarKinds
+    where
+        Self: 'a;
 
     type BoundVarKind = ty::BoundVariableKind;
     type PredefinedOpaques = solve::PredefinedOpaques<'tcx>;
+    type PredefinedOpaquesRef<'a>
+        = Self::PredefinedOpaques
+    where
+        Self: 'a;
 
     fn mk_predefined_opaques_in_body(
         self,
@@ -121,7 +144,15 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         self.mk_predefined_opaques_in_body(data)
     }
     type LocalDefIds = &'tcx ty::List<LocalDefId>;
+    type LocalDefIdsRef<'a>
+        = Self::LocalDefIds
+    where
+        Self: 'a;
     type CanonicalVarKinds = CanonicalVarKinds<'tcx>;
+    type CanonicalVarKindsRef<'a>
+        = Self::CanonicalVarKinds
+    where
+        Self: 'a;
     fn mk_canonical_var_kinds(
         self,
         kinds: &[ty::CanonicalVarKind<Self>],
@@ -130,6 +161,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     }
 
     type ExternalConstraints = ExternalConstraints<'tcx>;
+    type ExternalConstraintsRef<'a>
+        = Self::ExternalConstraints
+    where
+        Self: 'a;
     fn mk_external_constraints(
         self,
         data: ExternalConstraintsData<Self>,
@@ -141,9 +176,20 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         self.dep_graph.with_anon_task(self, crate::dep_graph::dep_kinds::TraitSelect, task)
     }
     type Ty = Ty<'tcx>;
+    type TyRef<'a>
+        = Self::Ty
+    where
+        Self: 'a;
     type Tys = &'tcx List<Ty<'tcx>>;
+    type TysRef<'a>
+        = Self::Tys
+    where
+        Self: 'a;
 
-    type FnInputTys = &'tcx [Ty<'tcx>];
+    type FnInputTys<'a>
+        = &'tcx [Ty<'tcx>]
+    where
+        Self: 'a;
     type ParamTy = ParamTy;
     type BoundTy = ty::BoundTy;
     type Symbol = Symbol;
@@ -151,13 +197,25 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type PlaceholderTy = ty::PlaceholderType;
     type ErrorGuaranteed = ErrorGuaranteed;
     type BoundExistentialPredicates = &'tcx List<PolyExistentialPredicate<'tcx>>;
+    type BoundExistentialPredicatesRef<'a>
+        = Self::BoundExistentialPredicates
+    where
+        Self: 'a;
 
     type AllocId = crate::mir::interpret::AllocId;
     type Pat = Pattern<'tcx>;
     type PatList = &'tcx List<Pattern<'tcx>>;
+    type PatListRef<'a>
+        = Self::PatList
+    where
+        Self: 'a;
     type Safety = hir::Safety;
     type Abi = ExternAbi;
     type Const = ty::Const<'tcx>;
+    type ConstRef<'a>
+        = Self::Const
+    where
+        Self: 'a;
     type PlaceholderConst = ty::PlaceholderConst;
 
     type ParamConst = ty::ParamConst;
@@ -167,18 +225,42 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type ValTree = ty::ValTree<'tcx>;
 
     type Region = Region<'tcx>;
+    type RegionRef<'a>
+        = Self::Region
+    where
+        Self: 'a;
     type EarlyParamRegion = ty::EarlyParamRegion;
     type LateParamRegion = ty::LateParamRegion;
     type BoundRegion = ty::BoundRegion;
     type PlaceholderRegion = ty::PlaceholderRegion;
 
     type RegionAssumptions = &'tcx ty::List<ty::ArgOutlivesPredicate<'tcx>>;
+    type RegionAssumptionsRef<'a>
+        = Self::RegionAssumptions
+    where
+        Self: 'a;
 
     type ParamEnv = ty::ParamEnv<'tcx>;
+    type ParamEnvRef<'a>
+        = Self::ParamEnv
+    where
+        Self: 'a;
     type Predicate = Predicate<'tcx>;
+    type PredicateRef<'a>
+        = Self::Predicate
+    where
+        Self: 'a;
 
     type Clause = Clause<'tcx>;
+    type ClauseRef<'a>
+        = Self::Clause
+    where
+        Self: 'a;
     type Clauses = ty::Clauses<'tcx>;
+    type ClausesRef<'a>
+        = Self::Clauses
+    where
+        Self: 'a;
 
     type Tracked<T: fmt::Debug + Clone> = WithDepNode<T>;
     fn mk_tracked<T: fmt::Debug + Clone>(
@@ -223,6 +305,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     }
 
     type VariancesOf = &'tcx [ty::Variance];
+    type VariancesOfRef<'a>
+        = Self::VariancesOf
+    where
+        Self: 'a;
 
     fn variances_of(self, def_id: DefId) -> Self::VariancesOf {
         self.variances_of(def_id)
@@ -251,7 +337,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         self.adt_def(adt_def_id)
     }
 
-    fn alias_ty_kind(self, alias: ty::AliasTy<'tcx>) -> ty::AliasTyKind {
+    fn alias_ty_kind(self, alias: &ty::AliasTy<'tcx>) -> ty::AliasTyKind {
         match self.def_kind(alias.def_id) {
             DefKind::AssocTy => {
                 if let DefKind::Impl { of_trait: false } = self.def_kind(self.parent(alias.def_id))
@@ -267,7 +353,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         }
     }
 
-    fn alias_term_kind(self, alias: ty::AliasTerm<'tcx>) -> ty::AliasTermKind {
+    fn alias_term_kind(self, alias: &ty::AliasTerm<'tcx>) -> ty::AliasTermKind {
         match self.def_kind(alias.def_id) {
             DefKind::AssocTy => {
                 if let DefKind::Impl { of_trait: false } = self.def_kind(self.parent(alias.def_id))
@@ -295,11 +381,14 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         }
     }
 
-    fn trait_ref_and_own_args_for_alias(
+    fn trait_ref_and_own_args_for_alias<'a>(
         self,
         def_id: DefId,
-        args: ty::GenericArgsRef<'tcx>,
-    ) -> (ty::TraitRef<'tcx>, &'tcx [ty::GenericArg<'tcx>]) {
+        args: Self::GenericArgsRef<'a>,
+    ) -> (ty::TraitRef<'tcx>, Self::GenericArgsSlice<'a>)
+    where
+        'tcx: 'a,
+    {
         debug_assert_matches!(self.def_kind(def_id), DefKind::AssocTy | DefKind::AssocConst);
         let trait_def_id = self.parent(def_id);
         debug_assert_matches!(self.def_kind(trait_def_id), DefKind::Trait);
@@ -308,6 +397,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     }
 
     fn mk_args(self, args: &[Self::GenericArg]) -> ty::GenericArgsRef<'tcx> {
+        self.mk_args(args)
+    }
+
+    fn mk_args_owned(self, args: &[Self::GenericArg]) -> ty::GenericArgsRef<'tcx> {
         self.mk_args(args)
     }
 
@@ -1075,7 +1168,7 @@ impl<'tcx> CtxtInterners<'tcx> {
         Predicate(Interned::new_unchecked(
             self.predicate
                 .intern(kind, |kind| {
-                    let flags = ty::FlagComputation::<TyCtxt<'tcx>>::for_predicate(kind);
+                    let flags = ty::FlagComputation::<TyCtxt<'tcx>>::for_predicate(&kind);
 
                     let stable_hash = self.stable_hash(&flags, sess, untracked, &kind);
 

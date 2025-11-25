@@ -8,6 +8,13 @@ use crate::ty::{self as ty, Ty, TyCtxt};
 pub type RelateResult<'tcx, T> = rustc_type_ir::relate::RelateResult<TyCtxt<'tcx>, T>;
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for Ty<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     #[inline]
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
@@ -19,6 +26,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for Ty<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Pattern<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     #[inline]
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
@@ -53,6 +67,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Pattern<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         a: Self,
@@ -89,6 +110,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for &'tcx ty::List<ty::PolyExistentialPredicate<
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::GenericArgsRef<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         a: ty::GenericArgsRef<'tcx>,
@@ -99,6 +127,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::GenericArgsRef<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Region<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         a: ty::Region<'tcx>,
@@ -109,6 +144,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Region<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Const<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         a: ty::Const<'tcx>,
@@ -119,6 +161,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Const<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Expr<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         ae: ty::Expr<'tcx>,
@@ -144,6 +193,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Expr<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::GenericArg<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         a: ty::GenericArg<'tcx>,
@@ -165,6 +221,13 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::GenericArg<'tcx> {
 }
 
 impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Term<'tcx> {
+    type RelateResult = Self;
+
+    #[inline]
+    fn into_relate_result(self) -> Self::RelateResult {
+        self
+    }
+
     fn relate<R: TypeRelation<TyCtxt<'tcx>>>(
         relation: &mut R,
         a: Self,
@@ -177,3 +240,32 @@ impl<'tcx> Relate<TyCtxt<'tcx>> for ty::Term<'tcx> {
         })
     }
 }
+
+macro_rules! impl_relate_ref_by_relate {
+    ( $( $ty:ty ),* $(,)? ) => {
+        $(
+            impl<'tcx> RelateRef<TyCtxt<'tcx>> for $ty {
+                #[inline]
+                fn relate_ref<R: TypeRelation<TyCtxt<'tcx>>>(
+                    relation: &mut R,
+                    a: &Self,
+                    b: &Self,
+                ) -> solver_relating::RelateResult<TyCtxt<'tcx>, Self> {
+                    Self::relate(relation, *a, *b)
+                }
+            }
+        )*
+    }
+}
+
+impl_relate_ref_by_relate!(
+    Ty<'tcx>,
+    ty::Pattern<'tcx>,
+    &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>>,
+    ty::GenericArgsRef<'tcx>,
+    ty::Region<'tcx>,
+    ty::Const<'tcx>,
+    ty::Expr<'tcx>,
+    ty::GenericArg<'tcx>,
+    ty::Term<'tcx>,
+);

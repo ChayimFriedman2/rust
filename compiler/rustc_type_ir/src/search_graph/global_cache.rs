@@ -1,3 +1,5 @@
+use std::collections::hash_map;
+
 use derive_where::derive_where;
 
 use super::{AvailableDepth, Cx, NestedGoals};
@@ -50,21 +52,23 @@ impl<X: Cx> GlobalCache<X> {
         let EvaluationResult { encountered_overflow, required_depth, heads, nested_goals, result } =
             evaluation_result;
         debug_assert!(heads.is_empty());
-        let result = cx.mk_tracked(result, dep_node);
         let entry = self.map.entry(input).or_default();
         if encountered_overflow {
+            let entry = entry.with_overflow.entry(required_depth);
+            if let hash_map::Entry::Occupied(prev) = &entry {
+                cx.assert_evaluation_is_concurrent();
+                assert_eq!(cx.get_tracked(&prev.get().result), result);
+            }
+            let result = cx.mk_tracked(result, dep_node);
             let with_overflow = WithOverflow { nested_goals, result };
-            let prev = entry.with_overflow.insert(required_depth, with_overflow);
-            if let Some(prev) = &prev {
-                cx.assert_evaluation_is_concurrent();
-                assert_eq!(cx.get_tracked(&prev.result), evaluation_result.result);
-            }
+            entry.insert_entry(with_overflow);
         } else {
-            let prev = entry.success.replace(Success { required_depth, nested_goals, result });
-            if let Some(prev) = &prev {
+            if let Some(prev) = &entry.success {
                 cx.assert_evaluation_is_concurrent();
-                assert_eq!(cx.get_tracked(&prev.result), evaluation_result.result);
+                assert_eq!(cx.get_tracked(&prev.result), result);
             }
+            let result = cx.mk_tracked(result, dep_node);
+            entry.success = Some(Success { required_depth, nested_goals, result });
         }
     }
 
@@ -75,7 +79,7 @@ impl<X: Cx> GlobalCache<X> {
     pub(super) fn get<'a>(
         &'a self,
         cx: X,
-        input: X::Input,
+        input: &X::Input,
         available_depth: AvailableDepth,
         mut candidate_is_applicable: impl FnMut(&NestedGoals<X>) -> bool,
     ) -> Option<CacheData<'a, X>> {

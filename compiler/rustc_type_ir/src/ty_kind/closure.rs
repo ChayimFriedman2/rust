@@ -1,11 +1,12 @@
 use std::ops::ControlFlow;
 
 use derive_where::derive_where;
-use rustc_type_ir_macros::{Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic};
+use rustc_type_ir_macros::{TypeFoldable_Generic, TypeVisitable_Generic};
 
 use crate::data_structures::DelayedMap;
 use crate::fold::{TypeFoldable, TypeFolder, TypeSuperFoldable, shift_region};
 use crate::inherent::*;
+use crate::ir_traits::*;
 use crate::visit::{TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor};
 use crate::{self as ty, Interner};
 
@@ -102,53 +103,51 @@ use crate::{self as ty, Interner};
 /// * `GR`: The "return type", which is the type of value returned upon
 ///   completion of the coroutine.
 #[derive_where(Clone, Copy, PartialEq, Hash, Debug; I: Interner)]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
-pub struct ClosureArgs<I: Interner> {
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
+pub struct ClosureArgs<'a, I: Interner + 'a> {
     /// Lifetime and type parameters from the enclosing function,
     /// concatenated with a tuple containing the types of the upvars.
     ///
     /// These are separated out because codegen wants to pass them around
     /// when monomorphizing.
-    pub args: I::GenericArgs,
+    pub args: I::GenericArgsRef<'a>,
 }
 
-impl<I: Interner> Eq for ClosureArgs<I> {}
+impl<I: Interner> Eq for ClosureArgs<'_, I> {}
 
 /// Struct returned by `split()`.
-pub struct ClosureArgsParts<I: Interner> {
+pub struct ClosureArgsParts<'a, I: Interner + 'a> {
     /// This is the args of the typeck root.
-    pub parent_args: I::GenericArgsSlice,
+    pub parent_args: I::GenericArgsSlice<'a>,
     /// Represents the maximum calling capability of the closure.
-    pub closure_kind_ty: I::Ty,
+    pub closure_kind_ty: I::TyRef<'a>,
     /// Captures the closure's signature. This closure signature is "tupled", and
     /// thus has a peculiar signature of `extern "rust-call" fn((Args, ...)) -> Ty`.
-    pub closure_sig_as_fn_ptr_ty: I::Ty,
+    pub closure_sig_as_fn_ptr_ty: I::TyRef<'a>,
     /// The upvars captured by the closure. Remains an inference variable
     /// until the upvar analysis, which happens late in HIR typeck.
-    pub tupled_upvars_ty: I::Ty,
+    pub tupled_upvars_ty: I::TyRef<'a>,
 }
 
-impl<I: Interner> ClosureArgs<I> {
+impl<'a, I: Interner> ClosureArgs<'a, I> {
     /// Construct `ClosureArgs` from `ClosureArgsParts`, containing `Args`
     /// for the closure parent, alongside additional closure-specific components.
-    pub fn new(cx: I, parts: ClosureArgsParts<I>) -> ClosureArgs<I> {
-        ClosureArgs {
-            args: cx.mk_args_from_iter(parts.parent_args.iter().chain([
-                parts.closure_kind_ty.into(),
-                parts.closure_sig_as_fn_ptr_ty.into(),
-                parts.tupled_upvars_ty.into(),
-            ])),
-        }
+    pub fn new(cx: I, parts: ClosureArgsParts<'_, I>) -> I::GenericArgs {
+        cx.mk_args_from_iter(parts.parent_args.iter().map(MyToOwned::o).chain([
+            parts.closure_kind_ty.o().into(),
+            parts.closure_sig_as_fn_ptr_ty.o().into(),
+            parts.tupled_upvars_ty.o().into(),
+        ]))
     }
 
     /// Divides the closure args into their respective components.
     /// The ordering assumed here must match that used by `ClosureArgs::new` above.
-    fn split(self) -> ClosureArgsParts<I> {
+    fn split(self) -> ClosureArgsParts<'a, I> {
         self.args.split_closure_args()
     }
 
     /// Returns the generic parameters of the closure's parent.
-    pub fn parent_args(self) -> I::GenericArgsSlice {
+    pub fn parent_args(self) -> I::GenericArgsSlice<'a> {
         self.split().parent_args
     }
 
@@ -156,10 +155,10 @@ impl<I: Interner> ClosureArgs<I> {
     /// In case there was a type error in figuring out the types of the captured path, an
     /// empty iterator is returned.
     #[inline]
-    pub fn upvar_tys(self) -> I::Tys {
+    pub fn upvar_tys(self) -> I::TysRef<'a> {
         match self.tupled_upvars_ty().kind() {
             ty::Error(_) => Default::default(),
-            ty::Tuple(tys) => tys,
+            ty::Tuple(tys) => tys.r(),
             ty::Infer(_) => panic!("upvar_tys called before capture types are inferred"),
             ty => panic!("Unexpected representation of upvar types tuple {:?}", ty),
         }
@@ -167,14 +166,14 @@ impl<I: Interner> ClosureArgs<I> {
 
     /// Returns the tuple type representing the upvars for this closure.
     #[inline]
-    pub fn tupled_upvars_ty(self) -> I::Ty {
+    pub fn tupled_upvars_ty(self) -> I::TyRef<'a> {
         self.split().tupled_upvars_ty
     }
 
     /// Returns the closure kind for this closure; may return a type
     /// variable during inference. To get the closure kind during
     /// inference, use `infcx.closure_kind(args)`.
-    pub fn kind_ty(self) -> I::Ty {
+    pub fn kind_ty(self) -> I::TyRef<'a> {
         self.split().closure_kind_ty
     }
 
@@ -183,7 +182,7 @@ impl<I: Interner> ClosureArgs<I> {
     // FIXME(eddyb) this should be unnecessary, as the shallowly resolved
     // type is known at the time of the creation of `ClosureArgs`,
     // see `rustc_hir_analysis::check::closure`.
-    pub fn sig_as_fn_ptr_ty(self) -> I::Ty {
+    pub fn sig_as_fn_ptr_ty(self) -> I::TyRef<'a> {
         self.split().closure_sig_as_fn_ptr_ty
     }
 
@@ -199,29 +198,29 @@ impl<I: Interner> ClosureArgs<I> {
     /// Extracts the signature from the closure.
     pub fn sig(self) -> ty::Binder<I, ty::FnSig<I>> {
         match self.sig_as_fn_ptr_ty().kind() {
-            ty::FnPtr(sig_tys, hdr) => sig_tys.with(hdr),
+            ty::FnPtr(sig_tys, hdr) => sig_tys.clone().with(*hdr),
             ty => panic!("closure_sig_as_fn_ptr_ty is not a fn-ptr: {ty:?}"),
         }
     }
 }
 
 #[derive_where(Clone, Copy, PartialEq, Hash, Debug; I: Interner)]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
-pub struct CoroutineClosureArgs<I: Interner> {
-    pub args: I::GenericArgs,
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
+pub struct CoroutineClosureArgs<'a, I: Interner + 'a> {
+    pub args: I::GenericArgsRef<'a>,
 }
 
-impl<I: Interner> Eq for CoroutineClosureArgs<I> {}
+impl<I: Interner> Eq for CoroutineClosureArgs<'_, I> {}
 
 /// See docs for explanation of how each argument is used.
 ///
 /// See [`CoroutineClosureSignature`] for how these arguments are put together
 /// to make a callable [`ty::FnSig`] suitable for typeck and borrowck.
-pub struct CoroutineClosureArgsParts<I: Interner> {
+pub struct CoroutineClosureArgsParts<'a, I: Interner + 'a> {
     /// This is the args of the typeck root.
-    pub parent_args: I::GenericArgsSlice,
+    pub parent_args: I::GenericArgsSlice<'a>,
     /// Represents the maximum calling capability of the closure.
-    pub closure_kind_ty: I::Ty,
+    pub closure_kind_ty: I::TyRef<'a>,
     /// Represents all of the relevant parts of the coroutine returned by this
     /// coroutine-closure. This signature parts type will have the general
     /// shape of `fn(tupled_inputs, resume_ty) -> (return_ty, yield_ty)`, where
@@ -230,10 +229,10 @@ pub struct CoroutineClosureArgsParts<I: Interner> {
     ///
     /// Use `coroutine_closure_sig` to break up this type rather than using it
     /// yourself.
-    pub signature_parts_ty: I::Ty,
+    pub signature_parts_ty: I::TyRef<'a>,
     /// The upvars captured by the closure. Remains an inference variable
     /// until the upvar analysis, which happens late in HIR typeck.
-    pub tupled_upvars_ty: I::Ty,
+    pub tupled_upvars_ty: I::TyRef<'a>,
     /// a function pointer that has the shape `for<'env> fn() -> (&'env T, ...)`.
     /// This allows us to represent the binder of the self-captures of the closure.
     ///
@@ -241,31 +240,29 @@ pub struct CoroutineClosureArgsParts<I: Interner> {
     /// from the closure's upvars, this will be `for<'env> fn() -> (&'env String,)`,
     /// while the `tupled_upvars_ty`, representing the by-move version of the same
     /// captures, will be `(String,)`.
-    pub coroutine_captures_by_ref_ty: I::Ty,
+    pub coroutine_captures_by_ref_ty: I::TyRef<'a>,
 }
 
-impl<I: Interner> CoroutineClosureArgs<I> {
-    pub fn new(cx: I, parts: CoroutineClosureArgsParts<I>) -> CoroutineClosureArgs<I> {
-        CoroutineClosureArgs {
-            args: cx.mk_args_from_iter(parts.parent_args.iter().chain([
-                parts.closure_kind_ty.into(),
-                parts.signature_parts_ty.into(),
-                parts.tupled_upvars_ty.into(),
-                parts.coroutine_captures_by_ref_ty.into(),
-            ])),
-        }
+impl<'a, I: Interner> CoroutineClosureArgs<'a, I> {
+    pub fn new(cx: I, parts: CoroutineClosureArgsParts<'_, I>) -> I::GenericArgs {
+        cx.mk_args_from_iter(parts.parent_args.iter().map(MyToOwned::o).chain([
+            parts.closure_kind_ty.o().into(),
+            parts.signature_parts_ty.o().into(),
+            parts.tupled_upvars_ty.o().into(),
+            parts.coroutine_captures_by_ref_ty.o().into(),
+        ]))
     }
 
-    fn split(self) -> CoroutineClosureArgsParts<I> {
+    fn split(self) -> CoroutineClosureArgsParts<'a, I> {
         self.args.split_coroutine_closure_args()
     }
 
-    pub fn parent_args(self) -> I::GenericArgsSlice {
+    pub fn parent_args(self) -> I::GenericArgsSlice<'a> {
         self.split().parent_args
     }
 
     #[inline]
-    pub fn upvar_tys(self) -> I::Tys {
+    pub fn upvar_tys(self) -> I::TysRef<'a> {
         match self.tupled_upvars_ty().kind() {
             ty::Error(_) => Default::default(),
             ty::Tuple(..) => self.tupled_upvars_ty().tuple_fields(),
@@ -275,11 +272,11 @@ impl<I: Interner> CoroutineClosureArgs<I> {
     }
 
     #[inline]
-    pub fn tupled_upvars_ty(self) -> I::Ty {
+    pub fn tupled_upvars_ty(self) -> I::TyRef<'a> {
         self.split().tupled_upvars_ty
     }
 
-    pub fn kind_ty(self) -> I::Ty {
+    pub fn kind_ty(self) -> I::TyRef<'a> {
         self.split().closure_kind_ty
     }
 
@@ -287,13 +284,13 @@ impl<I: Interner> CoroutineClosureArgs<I> {
         self.kind_ty().to_opt_closure_kind().unwrap()
     }
 
-    pub fn signature_parts_ty(self) -> I::Ty {
+    pub fn signature_parts_ty(self) -> I::TyRef<'a> {
         self.split().signature_parts_ty
     }
 
-    pub fn coroutine_closure_sig(self) -> ty::Binder<I, CoroutineClosureSignature<I>> {
+    pub fn coroutine_closure_sig(self) -> ty::Binder<I, CoroutineClosureSignature<'a, I>> {
         let ty::FnPtr(sig_tys, hdr) = self.signature_parts_ty().kind() else { panic!() };
-        sig_tys.map_bound(|sig_tys| {
+        sig_tys.map_bound_ref(|sig_tys| {
             let [resume_ty, tupled_inputs_ty] = *sig_tys.inputs().as_slice() else {
                 panic!();
             };
@@ -312,14 +309,14 @@ impl<I: Interner> CoroutineClosureArgs<I> {
         })
     }
 
-    pub fn coroutine_captures_by_ref_ty(self) -> I::Ty {
+    pub fn coroutine_captures_by_ref_ty(self) -> I::TyRef<'a> {
         self.split().coroutine_captures_by_ref_ty
     }
 
-    pub fn has_self_borrows(&self) -> bool {
+    pub fn has_self_borrows(self) -> bool {
         match self.coroutine_captures_by_ref_ty().kind() {
             ty::FnPtr(sig_tys, _) => sig_tys
-                .skip_binder()
+                .skip_binder_ref()
                 .visit_with(&mut HasRegionsBoundAt { binder: ty::INNERMOST })
                 .is_break(),
             ty::Error(_) => true,
@@ -343,8 +340,8 @@ impl<I: Interner> TypeVisitor<I> for HasRegionsBoundAt {
         ControlFlow::Continue(())
     }
 
-    fn visit_region(&mut self, r: I::Region) -> Self::Result {
-        if matches!(r.kind(), ty::ReBound(ty::BoundVarIndexKind::Bound(binder), _) if self.binder == binder)
+    fn visit_region(&mut self, r: I::RegionRef<'_>) -> Self::Result {
+        if matches!(r.kind(), ty::ReBound(ty::BoundVarIndexKind::Bound(binder), _) if self.binder == *binder)
         {
             ControlFlow::Break(())
         } else {
@@ -355,11 +352,11 @@ impl<I: Interner> TypeVisitor<I> for HasRegionsBoundAt {
 
 #[derive_where(Clone, Copy, PartialEq, Hash, Debug; I: Interner)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
-pub struct CoroutineClosureSignature<I: Interner> {
-    pub tupled_inputs_ty: I::Ty,
-    pub resume_ty: I::Ty,
-    pub yield_ty: I::Ty,
-    pub return_ty: I::Ty,
+pub struct CoroutineClosureSignature<'a, I: Interner + 'a> {
+    pub tupled_inputs_ty: I::TyRef<'a>,
+    pub resume_ty: I::TyRef<'a>,
+    pub yield_ty: I::TyRef<'a>,
+    pub return_ty: I::TyRef<'a>,
 
     // Like the `fn_sig_as_fn_ptr_ty` of a regular closure, these types
     // never actually differ. But we save them rather than recreating them
@@ -376,9 +373,9 @@ pub struct CoroutineClosureSignature<I: Interner> {
     pub abi: I::Abi,
 }
 
-impl<I: Interner> Eq for CoroutineClosureSignature<I> {}
+impl<I: Interner> Eq for CoroutineClosureSignature<'_, I> {}
 
-impl<I: Interner> CoroutineClosureSignature<I> {
+impl<'a, I: Interner> CoroutineClosureSignature<'a, I> {
     /// Construct a coroutine from the closure signature. Since a coroutine signature
     /// is agnostic to the type of generator that is returned (by-ref/by-move),
     /// the caller must specify what "flavor" of generator that they'd like to
@@ -390,24 +387,26 @@ impl<I: Interner> CoroutineClosureSignature<I> {
     pub fn to_coroutine(
         self,
         cx: I,
-        parent_args: I::GenericArgsSlice,
-        coroutine_kind_ty: I::Ty,
+        parent_args: I::GenericArgsSlice<'_>,
+        coroutine_kind_ty: I::TyRef<'_>,
         coroutine_def_id: I::CoroutineId,
-        tupled_upvars_ty: I::Ty,
+        tupled_upvars_ty: I::TyRef<'_>,
     ) -> I::Ty {
-        let coroutine_args = ty::CoroutineArgs::new(
+        Ty::new_coroutine(
             cx,
-            ty::CoroutineArgsParts {
-                parent_args,
-                kind_ty: coroutine_kind_ty,
-                resume_ty: self.resume_ty,
-                yield_ty: self.yield_ty,
-                return_ty: self.return_ty,
-                tupled_upvars_ty,
-            },
-        );
-
-        Ty::new_coroutine(cx, coroutine_def_id, coroutine_args.args)
+            coroutine_def_id,
+            ty::CoroutineArgs::new(
+                cx,
+                ty::CoroutineArgsParts {
+                    parent_args: parent_args.reborrow(),
+                    kind_ty: coroutine_kind_ty.reborrow(),
+                    resume_ty: self.resume_ty.reborrow(),
+                    yield_ty: self.yield_ty.reborrow(),
+                    return_ty: self.return_ty.reborrow(),
+                    tupled_upvars_ty: tupled_upvars_ty.reborrow(),
+                },
+            ),
+        )
     }
 
     /// Given known upvars and a [`ClosureKind`](ty::ClosureKind), compute the coroutine
@@ -418,12 +417,12 @@ impl<I: Interner> CoroutineClosureSignature<I> {
     pub fn to_coroutine_given_kind_and_upvars(
         self,
         cx: I,
-        parent_args: I::GenericArgsSlice,
+        parent_args: I::GenericArgsSlice<'_>,
         coroutine_def_id: I::CoroutineId,
         goal_kind: ty::ClosureKind,
-        env_region: I::Region,
-        closure_tupled_upvars_ty: I::Ty,
-        coroutine_captures_by_ref_ty: I::Ty,
+        env_region: I::RegionRef<'_>,
+        closure_tupled_upvars_ty: I::TyRef<'_>,
+        coroutine_captures_by_ref_ty: I::TyRef<'_>,
     ) -> I::Ty {
         let tupled_upvars_ty = Self::tupled_upvars_by_closure_kind(
             cx,
@@ -437,9 +436,9 @@ impl<I: Interner> CoroutineClosureSignature<I> {
         self.to_coroutine(
             cx,
             parent_args,
-            Ty::from_coroutine_closure_kind(cx, goal_kind),
+            Ty::from_coroutine_closure_kind(cx, goal_kind).r(),
             coroutine_def_id,
-            tupled_upvars_ty,
+            tupled_upvars_ty.r(),
         )
     }
 
@@ -455,10 +454,10 @@ impl<I: Interner> CoroutineClosureSignature<I> {
     pub fn tupled_upvars_by_closure_kind(
         cx: I,
         kind: ty::ClosureKind,
-        tupled_inputs_ty: I::Ty,
-        closure_tupled_upvars_ty: I::Ty,
-        coroutine_captures_by_ref_ty: I::Ty,
-        env_region: I::Region,
+        tupled_inputs_ty: I::TyRef<'_>,
+        closure_tupled_upvars_ty: I::TyRef<'_>,
+        coroutine_captures_by_ref_ty: I::TyRef<'_>,
+        env_region: I::RegionRef<'_>,
     ) -> I::Ty {
         match kind {
             ty::ClosureKind::Fn | ty::ClosureKind::FnMut => {
@@ -466,7 +465,7 @@ impl<I: Interner> CoroutineClosureSignature<I> {
                     panic!();
                 };
                 let coroutine_captures_by_ref_ty =
-                    sig_tys.output().skip_binder().fold_with(&mut FoldEscapingRegions {
+                    sig_tys.output().skip_binder().o().fold_with(&mut FoldEscapingRegions {
                         interner: cx,
                         region: env_region,
                         debruijn: ty::INNERMOST,
@@ -475,17 +474,21 @@ impl<I: Interner> CoroutineClosureSignature<I> {
                 Ty::new_tup_from_iter(
                     cx,
                     tupled_inputs_ty
+                        .reborrow()
                         .tuple_fields()
                         .iter()
-                        .chain(coroutine_captures_by_ref_ty.tuple_fields().iter()),
+                        .chain(coroutine_captures_by_ref_ty.r().tuple_fields().iter())
+                        .map(MyToOwned::o),
                 )
             }
             ty::ClosureKind::FnOnce => Ty::new_tup_from_iter(
                 cx,
                 tupled_inputs_ty
+                    .reborrow()
                     .tuple_fields()
                     .iter()
-                    .chain(closure_tupled_upvars_ty.tuple_fields().iter()),
+                    .chain(closure_tupled_upvars_ty.reborrow().tuple_fields().iter())
+                    .map(MyToOwned::o),
             ),
         }
     }
@@ -494,17 +497,17 @@ impl<I: Interner> CoroutineClosureSignature<I> {
 /// Instantiates a `for<'env> ...` binder with a specific region.
 // FIXME(async_closures): Get rid of this in favor of `BoundVarReplacerDelegate`
 // when that is uplifted.
-struct FoldEscapingRegions<I: Interner> {
+struct FoldEscapingRegions<'a, I: Interner + 'a> {
     interner: I,
     debruijn: ty::DebruijnIndex,
-    region: I::Region,
+    region: I::RegionRef<'a>,
 
     // Depends on `debruijn` because we may have types with regions of different
     // debruijn depths depending on the binders we've entered.
     cache: DelayedMap<(ty::DebruijnIndex, I::Ty), I::Ty>,
 }
 
-impl<I: Interner> TypeFolder<I> for FoldEscapingRegions<I> {
+impl<I: Interner> TypeFolder<I> for FoldEscapingRegions<'_, I> {
     fn cx(&self) -> I {
         self.interner
     }
@@ -512,11 +515,11 @@ impl<I: Interner> TypeFolder<I> for FoldEscapingRegions<I> {
     fn fold_ty(&mut self, t: I::Ty) -> I::Ty {
         if !t.has_vars_bound_at_or_above(self.debruijn) {
             t
-        } else if let Some(&t) = self.cache.get(&(self.debruijn, t)) {
-            t
+        } else if let Some(t) = self.cache.get(&(self.debruijn, t.clone())) {
+            t.clone()
         } else {
-            let res = t.super_fold_with(self);
-            assert!(self.cache.insert((self.debruijn, t), res));
+            let res = t.clone().super_fold_with(self);
+            assert!(self.cache.insert((self.debruijn, t), res.clone()));
             res
         }
     }
@@ -534,11 +537,11 @@ impl<I: Interner> TypeFolder<I> for FoldEscapingRegions<I> {
     fn fold_region(&mut self, r: <I as Interner>::Region) -> <I as Interner>::Region {
         if let ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), _) = r.kind() {
             assert!(
-                debruijn <= self.debruijn,
+                *debruijn <= self.debruijn,
                 "cannot instantiate binder with escaping bound vars"
             );
-            if self.debruijn == debruijn {
-                shift_region(self.interner, self.region, self.debruijn.as_u32())
+            if self.debruijn == *debruijn {
+                shift_region(self.interner, self.region.o(), self.debruijn.as_u32())
             } else {
                 r
             }
@@ -550,25 +553,25 @@ impl<I: Interner> TypeFolder<I> for FoldEscapingRegions<I> {
 
 #[derive_where(Clone, Copy, PartialEq, Hash, Debug; I: Interner)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
-pub struct GenSig<I: Interner> {
-    pub resume_ty: I::Ty,
-    pub yield_ty: I::Ty,
-    pub return_ty: I::Ty,
+pub struct GenSig<'a, I: Interner + 'a> {
+    pub resume_ty: I::TyRef<'a>,
+    pub yield_ty: I::TyRef<'a>,
+    pub return_ty: I::TyRef<'a>,
 }
 
-impl<I: Interner> Eq for GenSig<I> {}
+impl<I: Interner> Eq for GenSig<'_, I> {}
 /// Similar to `ClosureArgs`; see the above documentation for more.
 #[derive_where(Clone, Copy, PartialEq, Hash, Debug; I: Interner)]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
-pub struct CoroutineArgs<I: Interner> {
-    pub args: I::GenericArgs,
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
+pub struct CoroutineArgs<'a, I: Interner + 'a> {
+    pub args: I::GenericArgsRef<'a>,
 }
 
-impl<I: Interner> Eq for CoroutineArgs<I> {}
+impl<I: Interner> Eq for CoroutineArgs<'_, I> {}
 
-pub struct CoroutineArgsParts<I: Interner> {
+pub struct CoroutineArgsParts<'a, I: Interner + 'a> {
     /// This is the args of the typeck root.
-    pub parent_args: I::GenericArgsSlice,
+    pub parent_args: I::GenericArgsSlice<'a>,
 
     /// The coroutines returned by a coroutine-closure's `AsyncFnOnce`/`AsyncFnMut`
     /// implementations must be distinguished since the former takes the closure's
@@ -579,45 +582,43 @@ pub struct CoroutineArgsParts<I: Interner> {
     /// kind: `i8`/`i16`/`i32`.
     ///
     /// For regular coroutines, this field will always just be `()`.
-    pub kind_ty: I::Ty,
+    pub kind_ty: I::TyRef<'a>,
 
-    pub resume_ty: I::Ty,
-    pub yield_ty: I::Ty,
-    pub return_ty: I::Ty,
+    pub resume_ty: I::TyRef<'a>,
+    pub yield_ty: I::TyRef<'a>,
+    pub return_ty: I::TyRef<'a>,
 
     /// The upvars captured by the closure. Remains an inference variable
     /// until the upvar analysis, which happens late in HIR typeck.
-    pub tupled_upvars_ty: I::Ty,
+    pub tupled_upvars_ty: I::TyRef<'a>,
 }
 
-impl<I: Interner> CoroutineArgs<I> {
+impl<'a, I: Interner> CoroutineArgs<'a, I> {
     /// Construct `CoroutineArgs` from `CoroutineArgsParts`, containing `Args`
     /// for the coroutine parent, alongside additional coroutine-specific components.
-    pub fn new(cx: I, parts: CoroutineArgsParts<I>) -> CoroutineArgs<I> {
-        CoroutineArgs {
-            args: cx.mk_args_from_iter(parts.parent_args.iter().chain([
-                parts.kind_ty.into(),
-                parts.resume_ty.into(),
-                parts.yield_ty.into(),
-                parts.return_ty.into(),
-                parts.tupled_upvars_ty.into(),
-            ])),
-        }
+    pub fn new(cx: I, parts: CoroutineArgsParts<'_, I>) -> I::GenericArgs {
+        cx.mk_args_from_iter(parts.parent_args.iter().map(MyToOwned::o).chain([
+            parts.kind_ty.o().into(),
+            parts.resume_ty.o().into(),
+            parts.yield_ty.o().into(),
+            parts.return_ty.o().into(),
+            parts.tupled_upvars_ty.o().into(),
+        ]))
     }
 
     /// Divides the coroutine args into their respective components.
     /// The ordering assumed here must match that used by `CoroutineArgs::new` above.
-    fn split(self) -> CoroutineArgsParts<I> {
+    fn split(self) -> CoroutineArgsParts<'a, I> {
         self.args.split_coroutine_args()
     }
 
     /// Returns the generic parameters of the coroutine's parent.
-    pub fn parent_args(self) -> I::GenericArgsSlice {
+    pub fn parent_args(self) -> I::GenericArgsSlice<'a> {
         self.split().parent_args
     }
 
     // Returns the kind of the coroutine. See docs on the `kind_ty` field.
-    pub fn kind_ty(self) -> I::Ty {
+    pub fn kind_ty(self) -> I::TyRef<'a> {
         self.split().kind_ty
     }
 
@@ -625,10 +626,10 @@ impl<I: Interner> CoroutineArgs<I> {
     /// In case there was a type error in figuring out the types of the captured path, an
     /// empty iterator is returned.
     #[inline]
-    pub fn upvar_tys(self) -> I::Tys {
+    pub fn upvar_tys(self) -> I::TysRef<'a> {
         match self.tupled_upvars_ty().kind() {
             ty::Error(_) => Default::default(),
-            ty::Tuple(tys) => tys,
+            ty::Tuple(tys) => tys.r(),
             ty::Infer(_) => panic!("upvar_tys called before capture types are inferred"),
             ty => panic!("Unexpected representation of upvar types tuple {:?}", ty),
         }
@@ -636,28 +637,28 @@ impl<I: Interner> CoroutineArgs<I> {
 
     /// Returns the tuple type representing the upvars for this coroutine.
     #[inline]
-    pub fn tupled_upvars_ty(self) -> I::Ty {
+    pub fn tupled_upvars_ty(self) -> I::TyRef<'a> {
         self.split().tupled_upvars_ty
     }
 
     /// Returns the type representing the resume type of the coroutine.
-    pub fn resume_ty(self) -> I::Ty {
+    pub fn resume_ty(self) -> I::TyRef<'a> {
         self.split().resume_ty
     }
 
     /// Returns the type representing the yield type of the coroutine.
-    pub fn yield_ty(self) -> I::Ty {
+    pub fn yield_ty(self) -> I::TyRef<'a> {
         self.split().yield_ty
     }
 
     /// Returns the type representing the return type of the coroutine.
-    pub fn return_ty(self) -> I::Ty {
+    pub fn return_ty(self) -> I::TyRef<'a> {
         self.split().return_ty
     }
 
     /// Returns the "coroutine signature", which consists of its resume, yield
     /// and return types.
-    pub fn sig(self) -> GenSig<I> {
+    pub fn sig(self) -> GenSig<'a, I> {
         let parts = self.split();
         GenSig { resume_ty: parts.resume_ty, yield_ty: parts.yield_ty, return_ty: parts.return_ty }
     }

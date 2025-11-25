@@ -2012,7 +2012,7 @@ pub trait PrettyPrinter<'tcx>: Printer<'tcx> + fmt::Write {
 
     fn pretty_print_closure_as_impl(
         &mut self,
-        closure: ty::ClosureArgs<TyCtxt<'tcx>>,
+        closure: ty::ClosureArgs<'tcx>,
     ) -> Result<(), PrintError> {
         let sig = closure.sig();
         let kind = closure.kind_ty().to_opt_closure_kind().unwrap_or(ty::ClosureKind::Fn);
@@ -3051,7 +3051,7 @@ impl<'tcx> ty::PolyTraitPredicate<'tcx> {
 
 #[derive(Debug, Copy, Clone, Lift)]
 pub struct PrintClosureAsImpl<'tcx> {
-    pub closure: ty::ClosureArgs<TyCtxt<'tcx>>,
+    pub closure: ty::GenericArgsRef<'tcx>,
 }
 
 macro_rules! forward_display_to_print {
@@ -3331,7 +3331,7 @@ define_print_and_forward_display! {
     }
 
     PrintClosureAsImpl<'tcx> {
-        p.pretty_print_closure_as_impl(self.closure)?;
+        p.pretty_print_closure_as_impl(self.closure.as_closure())?;
     }
 
     ty::ParamTy {

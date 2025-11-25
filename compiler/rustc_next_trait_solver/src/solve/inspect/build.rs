@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;
+use rustc_type_ir::ir_traits::*;
 use rustc_type_ir::{self as ty, Interner};
 
 use crate::canonical;
@@ -53,7 +54,7 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> ProofTreeBuilder<D> {
         } else {
             EvaluationStepBuilder {
                 state: Some(Box::new(WipEvaluationStep {
-                    var_values: var_values.var_values.to_vec(),
+                    var_values: var_values.var_values.r().iter().map(MyToOwned::o).collect(),
                     evaluation: WipProbe {
                         initial_num_var_values: var_values.len(),
                         steps: vec![],
@@ -188,9 +189,12 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> EvaluationStepBuilder<D> {
         nested
     }
 
-    pub(crate) fn add_var_value<T: Into<I::GenericArg>>(&mut self, arg: T) {
+    pub(crate) fn add_var_value<'a, T: Into<I::GenericArgRef<'a>>>(&mut self, arg: T)
+    where
+        I: 'a,
+    {
         if let Some(this) = self.as_mut() {
-            this.var_values.push(arg.into());
+            this.var_values.push(arg.into().o());
         }
     }
 
@@ -232,14 +236,14 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> EvaluationStepBuilder<D> {
         delegate: &D,
         max_input_universe: ty::UniverseIndex,
         source: GoalSource,
-        goal: Goal<I, I::Predicate>,
+        goal: &Goal<I, I::Predicate>,
     ) {
         if let Some(this) = self.as_mut() {
             let goal = canonical::make_canonical_state(
                 delegate,
                 &this.var_values,
                 max_input_universe,
-                goal,
+                goal.clone(),
             );
             this.current_evaluation_scope().steps.push(WipProbeStep::AddGoal(source, goal))
         }
@@ -249,14 +253,14 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> EvaluationStepBuilder<D> {
         &mut self,
         delegate: &D,
         max_input_universe: ty::UniverseIndex,
-        impl_args: I::GenericArgs,
+        impl_args: I::GenericArgsRef<'_>,
     ) {
         if let Some(this) = self.as_mut() {
             let impl_args = canonical::make_canonical_state(
                 delegate,
                 &this.var_values,
                 max_input_universe,
-                impl_args,
+                impl_args.o(),
             );
             this.current_evaluation_scope().steps.push(WipProbeStep::RecordImplArgs { impl_args });
         }
@@ -281,9 +285,12 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> EvaluationStepBuilder<D> {
         self
     }
 
-    pub(crate) fn query_result(&mut self, result: QueryResult<I>) {
+    pub(crate) fn query_result(&mut self, result: &QueryResult<I>) {
         if let Some(this) = self.as_mut() {
-            assert_eq!(this.evaluation.kind.replace(inspect::ProbeKind::Root { result }), None);
+            assert_eq!(
+                this.evaluation.kind.replace(inspect::ProbeKind::Root { result: result.clone() }),
+                None
+            );
         }
     }
 }

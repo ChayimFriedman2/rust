@@ -9,11 +9,14 @@ use rustc_index::bit_set::DenseBitSet;
 use crate::fold::TypeFoldable;
 use crate::inherent::*;
 use crate::ir_print::IrPrint;
+use crate::ir_traits::{MyToOwned, as_owned_kind, as_ref, reborrow};
 use crate::lang_items::{SolverAdtLangItem, SolverLangItem, SolverTraitLangItem};
-use crate::relate::Relate;
+use crate::relate::{Relate, RelateRef};
 use crate::solve::{CanonicalInput, Certainty, ExternalConstraintsData, QueryResult, inspect};
 use crate::visit::{Flags, TypeVisitable};
-use crate::{self as ty, CanonicalParamEnvCacheEntry, search_graph};
+use crate::{
+    self as ty, CanonicalParamEnvCacheEntry, TypeSuperFoldable, TypeSuperVisitable, search_graph,
+};
 
 #[cfg_attr(feature = "nightly", rustc_diagnostic_item = "type_ir_interner")]
 pub trait Interner:
@@ -33,10 +36,6 @@ pub trait Interner:
     + IrPrint<ty::FnSig<Self>>
     + IrPrint<ty::PatternKind<Self>>
 {
-    fn next_trait_solver_globally(self) -> bool {
-        true
-    }
-
     type DefId: DefId<Self>;
     type LocalDefId: Copy + Debug + Hash + Eq + Into<Self::DefId> + TypeFoldable<Self>;
     // Various more specific `DefId`s.
@@ -56,50 +55,90 @@ pub trait Interner:
     type UnevaluatedConstId: SpecificDefId<Self>;
     type Span: Span<Self>;
 
-    type GenericArgs: GenericArgs<Self>;
-    type GenericArgsSlice: Copy + Debug + Hash + Eq + SliceLike<Item = Self::GenericArg>;
-    type GenericArg: GenericArg<Self>;
-    type Term: Term<Self>;
+    type GenericArgs: GenericArgs<Self> + as_ref::GenericArgs<Self>;
+    type GenericArgsRef<'a>: GenericArgsRef<'a, Self>
+        + MyToOwned<Self, Owned = Self::GenericArgs>
+        + reborrow::GenericArgsRef<'a, Self>
+    where
+        Self: 'a;
+    type GenericArgsSlice<'a>: SliceLike<'a, Item = Self::GenericArgRef<'a>>
+        + reborrow::GenericArgsSlice<'a, Self>
+    where
+        Self: 'a;
+    type GenericArg: as_ref::GenericArg<Self>
+        + TypeFoldable<Self>
+        + From<Self::Ty>
+        + From<Self::Region>
+        + From<Self::Const>
+        + From<Self::Term>
+        + as_owned_kind::GenericArg<Self>;
+    type GenericArgRef<'a>: GenericArg<'a, Self>
+        + MyToOwned<Self, Owned = Self::GenericArg>
+        + reborrow::GenericArgRef<'a, Self>
+    where
+        Self: 'a;
+    type Term: as_ref::Term<Self> + Term<Self> + as_owned_kind::Term<Self>;
+    type TermRef<'a>: TermRef<'a, Self>
+        + MyToOwned<Self, Owned = Self::Term>
+        + reborrow::TermRef<'a, Self>
+    where
+        Self: 'a;
 
-    type BoundVarKinds: Copy + Debug + Hash + Eq + SliceLike<Item = Self::BoundVarKind> + Default;
+    type BoundVarKinds: Default + as_ref::BoundVarKinds<Self>;
+    type BoundVarKindsRef<'a>: SliceLike<'a, Item = Self::BoundVarKind>
+        + Default
+        + MyToOwned<Self, Owned = Self::BoundVarKinds>
+        + reborrow::BoundVarKindsRef<'a, Self>
+    where
+        Self: 'a;
     type BoundVarKind: Copy + Debug + Hash + Eq;
 
-    type PredefinedOpaques: Copy
-        + Debug
-        + Hash
-        + Eq
-        + TypeFoldable<Self>
-        + SliceLike<Item = (ty::OpaqueTypeKey<Self>, Self::Ty)>;
+    type PredefinedOpaques: as_ref::PredefinedOpaques<Self> + TypeFoldable<Self>;
+    type PredefinedOpaquesRef<'a>: Debug
+        + TypeVisitable<Self>
+        + SliceLike<'a, Item = (ty::OpaqueTypeKey<Self>, Self::Ty)>
+        + MyToOwned<Self, Owned = Self::PredefinedOpaques>
+        + reborrow::PredefinedOpaquesRef<'a, Self>
+    where
+        Self: 'a;
     fn mk_predefined_opaques_in_body(
         self,
         data: &[(ty::OpaqueTypeKey<Self>, Self::Ty)],
     ) -> Self::PredefinedOpaques;
 
-    type LocalDefIds: Copy
-        + Debug
-        + Hash
+    type LocalDefIds: Default + as_ref::LocalDefIds<Self>;
+    type LocalDefIdsRef<'a>: Debug
         + Default
-        + Eq
         + TypeVisitable<Self>
-        + SliceLike<Item = Self::LocalDefId>;
+        + SliceLike<'a, Item = Self::LocalDefId>
+        + MyToOwned<Self, Owned = Self::LocalDefIds>
+        + reborrow::LocalDefIdsRef<'a, Self>
+    where
+        Self: 'a;
 
-    type CanonicalVarKinds: Copy
-        + Debug
-        + Hash
-        + Eq
-        + SliceLike<Item = ty::CanonicalVarKind<Self>>
-        + Default;
+    type CanonicalVarKinds: as_ref::CanonicalVarKinds<Self> + Default;
+    type CanonicalVarKindsRef<'a>: Debug
+        + SliceLike<'a, Item = ty::CanonicalVarKind<Self>>
+        + Default
+        + MyToOwned<Self, Owned = Self::CanonicalVarKinds>
+        + reborrow::CanonicalVarKindsRef<'a, Self>
+    where
+        Self: 'a;
     fn mk_canonical_var_kinds(
         self,
         kinds: &[ty::CanonicalVarKind<Self>],
     ) -> Self::CanonicalVarKinds;
 
-    type ExternalConstraints: Copy
-        + Debug
-        + Hash
-        + Eq
-        + TypeFoldable<Self>
-        + Deref<Target = ExternalConstraintsData<Self>>;
+    type ExternalConstraints: as_ref::ExternalConstraints<Self>
+        + Deref<Target = ExternalConstraintsData<Self>>
+        + TypeFoldable<Self>;
+    type ExternalConstraintsRef<'a>: Debug
+        + TypeVisitable<Self>
+        + Deref<Target = ExternalConstraintsData<Self>>
+        + MyToOwned<Self, Owned = Self::ExternalConstraints>
+        + reborrow::ExternalConstraintsRef<'a, Self>
+    where
+        Self: 'a;
     fn mk_external_constraints(
         self,
         data: ExternalConstraintsData<Self>,
@@ -116,9 +155,23 @@ pub trait Interner:
     fn with_cached_task<T>(self, task: impl FnOnce() -> T) -> (T, Self::DepNodeIndex);
 
     // Kinds of tys
-    type Ty: Ty<Self>;
-    type Tys: Tys<Self>;
-    type FnInputTys: Copy + Debug + Hash + Eq + SliceLike<Item = Self::Ty> + TypeVisitable<Self>;
+    type Ty: Ty<Self> + as_ref::Ty<Self>;
+    type TyRef<'a>: TyRef<'a, Self> + MyToOwned<Self, Owned = Self::Ty> + reborrow::TyRef<'a, Self>
+    where
+        Self: 'a;
+    type Tys: as_ref::Tys<Self> + TypeVisitable<Self> + TypeFoldable<Self> + Default;
+    type TysRef<'a>: Tys<'a, Self> + MyToOwned<Self, Owned = Self::Tys> + reborrow::TysRef<'a, Self>
+    where
+        Self: 'a;
+    type FnInputTys<'a>: Copy
+        + Debug
+        + Hash
+        + Eq
+        + SliceLike<'a, Item = Self::TyRef<'a>>
+        + TypeVisitable<Self>
+        + reborrow::FnInputTys<'a, Self>
+    where
+        Self: 'a;
     type ParamTy: ParamLike;
     type BoundTy: BoundVarLike<Self>;
     type PlaceholderTy: PlaceholderLike<Self, Bound = Self::BoundTy>;
@@ -126,60 +179,125 @@ pub trait Interner:
 
     // Things stored inside of tys
     type ErrorGuaranteed: Copy + Debug + Hash + Eq;
-    type BoundExistentialPredicates: BoundExistentialPredicates<Self>;
+    type BoundExistentialPredicates: as_ref::BoundExistentialPredicates<Self> + TypeFoldable<Self>;
+    type BoundExistentialPredicatesRef<'a>: BoundExistentialPredicates<'a, Self>
+        + MyToOwned<Self, Owned = Self::BoundExistentialPredicates>
+        + reborrow::BoundExistentialPredicatesRef<'a, Self>
+    where
+        Self: 'a;
     type AllocId: Copy + Debug + Hash + Eq;
     type Pat: Copy
         + Debug
         + Hash
         + Eq
         + Debug
-        + Relate<Self>
+        + RelateRef<Self>
+        + TypeFoldable<Self>
         + Flags
-        + IntoKind<Kind = ty::PatternKind<Self>>;
-    type PatList: Copy
+        + AsKind<Kind = ty::PatternKind<Self>>;
+    type PatList: as_ref::PatList<Self> + TypeVisitable<Self>;
+    type PatListRef<'a>: Copy
         + Debug
         + Hash
         + Default
         + Eq
         + TypeVisitable<Self>
-        + SliceLike<Item = Self::Pat>;
+        + SliceLike<'a, Item = Self::Pat>
+        + MyToOwned<Self, Owned = Self::PatList>
+        + reborrow::PatListRef<'a, Self>
+    where
+        Self: 'a;
     type Safety: Safety<Self>;
     type Abi: Abi<Self>;
 
     // Kinds of consts
-    type Const: Const<Self>;
+    type Const: Const<Self> + as_ref::Const<Self>;
+    type ConstRef<'a>: AnyConst<Self>
+        + Relate<Self, RelateResult = Self::Const>
+        + AsKindRef<'a, Kind = ty::ConstKind<Self>>
+        + Into<Self::GenericArgRef<'a>>
+        + Into<Self::TermRef<'a>>
+        + MyToOwned<Self, Owned = Self::Const>
+        + reborrow::ConstRef<'a, Self>
+    where
+        Self: 'a;
     type ParamConst: Copy + Debug + Hash + Eq + ParamLike;
     type BoundConst: BoundVarLike<Self>;
     type PlaceholderConst: PlaceholderConst<Self>;
     type ValueConst: ValueConst<Self>;
     type ExprConst: ExprConst<Self>;
-    type ValTree: Copy + Debug + Hash + Eq;
+    type ValTree: Clone + Debug + Hash + Eq;
 
     // Kinds of regions
-    type Region: Region<Self>;
+    type Region: Region<Self> + as_ref::Region<Self>;
+    type RegionRef<'a>: AnyRegion<Self>
+        + Relate<Self, RelateResult = Self::Region>
+        + Into<Self::GenericArgRef<'a>>
+        + MyToOwned<Self, Owned = Self::Region>
+        + reborrow::RegionRef<'a, Self>
+    where
+        Self: 'a;
     type EarlyParamRegion: ParamLike;
     type LateParamRegion: Copy + Debug + Hash + Eq;
     type BoundRegion: BoundVarLike<Self>;
     type PlaceholderRegion: PlaceholderLike<Self, Bound = Self::BoundRegion>;
 
-    type RegionAssumptions: Copy
+    type RegionAssumptions: as_ref::RegionAssumptions<Self> + Debug + Hash + Eq + TypeFoldable<Self>;
+    type RegionAssumptionsRef<'a>: Copy
         + Debug
         + Hash
         + Eq
-        + SliceLike<Item = ty::OutlivesPredicate<Self, Self::GenericArg>>
-        + TypeFoldable<Self>;
+        + SliceLike<'a, Item = ty::OutlivesPredicate<Self, Self::GenericArg>>
+        + TypeVisitable<Self>
+        + MyToOwned<Self, Owned = Self::RegionAssumptions>
+        + reborrow::RegionAssumptionsRef<'a, Self>
+    where
+        Self: 'a;
 
     // Predicates
-    type ParamEnv: ParamEnv<Self>;
-    type Predicate: Predicate<Self>;
-    type Clause: Clause<Self>;
-    type Clauses: Clauses<Self>;
+    type ParamEnv: as_ref::ParamEnv<Self> + TypeFoldable<Self>;
+    type ParamEnvRef<'a>: ParamEnv<'a, Self>
+        + MyToOwned<Self, Owned = Self::ParamEnv>
+        + reborrow::ParamEnvRef<'a, Self>
+    where
+        Self: 'a;
+    type Predicate: Predicate<Self> + as_ref::Predicate<Self>;
+    type PredicateRef<'a>: PredicateRef<'a, Self>
+        + MyToOwned<Self, Owned = Self::Predicate>
+        + reborrow::PredicateRef<'a, Self>
+    where
+        Self: 'a;
+    type Clause: Clause<Self> + as_ref::Clause<Self>;
+    type ClauseRef<'a>: ClauseRef<'a, Self>
+        + MyToOwned<Self, Owned = Self::Clause>
+        + reborrow::ClauseRef<'a, Self>
+    where
+        Self: 'a;
+    type Clauses: TypeSuperVisitable<Self> + TypeSuperFoldable<Self> + Flags + as_ref::Clauses<Self>;
+    type ClausesRef<'a>: Clauses<'a, Self>
+        + MyToOwned<Self, Owned = Self::Clauses>
+        + reborrow::ClausesRef<'a, Self>
+    where
+        Self: 'a;
+
+    fn mk_args(self, args: &[Self::GenericArgRef<'_>]) -> Self::GenericArgs;
+
+    fn mk_args_owned(self, args: &[Self::GenericArg]) -> Self::GenericArgs;
+
+    fn mk_args_from_iter<I, T>(self, args: I) -> T::Output
+    where
+        I: Iterator<Item = T>,
+        T: CollectAndApply<Self::GenericArg, Self::GenericArgs>;
+
+    fn next_trait_solver_globally(self) -> bool {
+        true
+    }
 
     fn with_global_cache<R>(self, f: impl FnOnce(&mut search_graph::GlobalCache<Self>) -> R) -> R;
 
     fn canonical_param_env_cache_get_or_insert<R>(
         self,
-        param_env: Self::ParamEnv,
+        param_env: Self::ParamEnvRef<'_>,
         f: impl FnOnce() -> CanonicalParamEnvCacheEntry<Self>,
         from_entry: impl FnOnce(&CanonicalParamEnvCacheEntry<Self>) -> R,
     ) -> R;
@@ -193,7 +311,13 @@ pub trait Interner:
     type GenericsOf: GenericsOf<Self>;
     fn generics_of(self, def_id: Self::DefId) -> Self::GenericsOf;
 
-    type VariancesOf: Copy + Debug + SliceLike<Item = ty::Variance>;
+    type VariancesOf: VariancesOf + Debug + as_ref::VariancesOf<Self>;
+    type VariancesOfRef<'a>: Copy
+        + Debug
+        + SliceLike<'a, Item = ty::Variance>
+        + MyToOwned<Self, Owned = Self::VariancesOf>
+    where
+        Self: 'a;
     fn variances_of(self, def_id: Self::DefId) -> Self::VariancesOf;
 
     fn opt_alias_variances(
@@ -210,30 +334,29 @@ pub trait Interner:
     type AdtDef: AdtDef<Self>;
     fn adt_def(self, adt_def_id: Self::AdtId) -> Self::AdtDef;
 
-    fn alias_ty_kind(self, alias: ty::AliasTy<Self>) -> ty::AliasTyKind;
+    fn alias_ty_kind(self, alias: &ty::AliasTy<Self>) -> ty::AliasTyKind;
 
-    fn alias_term_kind(self, alias: ty::AliasTerm<Self>) -> ty::AliasTermKind;
+    fn alias_term_kind(self, alias: &ty::AliasTerm<Self>) -> ty::AliasTermKind;
 
-    fn trait_ref_and_own_args_for_alias(
+    fn trait_ref_and_own_args_for_alias<'a>(
         self,
         def_id: Self::DefId,
-        args: Self::GenericArgs,
-    ) -> (ty::TraitRef<Self>, Self::GenericArgsSlice);
-
-    fn mk_args(self, args: &[Self::GenericArg]) -> Self::GenericArgs;
-
-    fn mk_args_from_iter<I, T>(self, args: I) -> T::Output
+        args: Self::GenericArgsRef<'a>,
+    ) -> (ty::TraitRef<Self>, Self::GenericArgsSlice<'a>)
     where
-        I: Iterator<Item = T>,
-        T: CollectAndApply<Self::GenericArg, Self::GenericArgs>;
+        Self: 'a;
 
-    fn check_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgs) -> bool;
+    fn check_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgsRef<'_>) -> bool;
 
-    fn debug_assert_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgs);
+    fn debug_assert_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgsRef<'_>);
 
     /// Assert that the args from an `ExistentialTraitRef` or `ExistentialProjection`
     /// are compatible with the `DefId`.
-    fn debug_assert_existential_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgs);
+    fn debug_assert_existential_args_compatible(
+        self,
+        def_id: Self::DefId,
+        args: Self::GenericArgsRef<'_>,
+    );
 
     fn mk_type_list_from_iter<I, T>(self, args: I) -> T::Output
     where
@@ -351,7 +474,7 @@ pub trait Interner:
     fn for_each_relevant_impl(
         self,
         trait_def_id: Self::TraitId,
-        self_ty: Self::Ty,
+        self_ty: Self::TyRef<'_>,
         f: impl FnMut(Self::ImplId),
     );
     fn for_each_blanket_impl(self, trait_def_id: Self::TraitId, f: impl FnMut(Self::ImplId));
@@ -412,6 +535,17 @@ pub trait Interner:
         self,
         canonical_goal: CanonicalInput<Self>,
     ) -> (QueryResult<Self>, Self::Probe);
+}
+
+pub trait VariancesOf {
+    fn into_iter(self) -> impl Iterator<Item = ty::Variance>;
+}
+
+impl VariancesOf for &[ty::Variance] {
+    #[inline]
+    fn into_iter(self) -> impl Iterator<Item = ty::Variance> {
+        self.iter().copied()
+    }
 }
 
 /// Imagine you have a function `F: FnOnce(&[T]) -> R`, plus an iterator `iter`

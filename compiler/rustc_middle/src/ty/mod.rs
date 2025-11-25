@@ -100,8 +100,9 @@ pub use self::region::{
 pub use self::rvalue_scopes::RvalueScopes;
 pub use self::sty::{
     AliasTy, Article, Binder, BoundTy, BoundTyKind, BoundVariableKind, CanonicalPolyFnSig,
-    CoroutineArgsExt, EarlyBinder, FnSig, InlineConstArgs, InlineConstArgsParts, ParamConst,
-    ParamTy, PolyFnSig, TyKind, TypeAndMut, TypingMode, UpvarArgs,
+    ClosureArgs, CoroutineArgs, CoroutineArgsExt, CoroutineClosureArgs, EarlyBinder, FnSig, GenSig,
+    InlineConstArgs, InlineConstArgsParts, ParamConst, ParamTy, PolyFnSig, TyKind, TypeAndMut,
+    TypingMode, UpvarArgs,
 };
 pub use self::trait_def::TraitDef;
 pub use self::typeck_results::{
@@ -152,6 +153,7 @@ mod generics;
 mod impls_ty;
 mod instance;
 mod intrinsic;
+mod ir_trait_impls;
 mod list;
 mod opaque_types;
 mod predicate;
@@ -422,11 +424,11 @@ pub struct CReaderCacheKey {
 #[rustc_pass_by_value]
 pub struct Ty<'tcx>(Interned<'tcx, WithCachedTypeInfo<TyKind<'tcx>>>);
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Ty<'tcx> {
+impl<'a, 'tcx> rustc_type_ir::inherent::AsKindRef<'a> for Ty<'tcx> {
     type Kind = TyKind<'tcx>;
 
-    fn kind(self) -> TyKind<'tcx> {
-        *self.kind()
+    fn kind(self) -> &'a TyKind<'tcx> {
+        self.kind()
     }
 }
 
@@ -460,10 +462,31 @@ pub struct Term<'tcx> {
     marker: PhantomData<(Ty<'tcx>, Const<'tcx>)>,
 }
 
-impl<'tcx> rustc_type_ir::inherent::Term<TyCtxt<'tcx>> for Term<'tcx> {}
+impl<'tcx> rustc_type_ir::inherent::Term<TyCtxt<'tcx>> for Term<'tcx> {
+    #[inline]
+    fn into_type(self) -> Option<Ty<'tcx>> {
+        match self.kind() {
+            TermKind::Ty(it) => Some(it),
+            _ => None,
+        }
+    }
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Term<'tcx> {
-    type Kind = TermKind<'tcx>;
+    #[inline]
+    fn into_const(self) -> Option<Const<'tcx>> {
+        match self.kind() {
+            TermKind::Const(it) => Some(it),
+            _ => None,
+        }
+    }
+}
+
+impl<'a, 'tcx> rustc_type_ir::inherent::TermRef<'a, TyCtxt<'tcx>> for Term<'tcx> where 'tcx: 'a {}
+
+impl<'a, 'tcx> rustc_type_ir::inherent::AsOwnedKindRef<'a> for Term<'tcx>
+where
+    'tcx: 'a,
+{
+    type Kind = rustc_type_ir::TermKind<'a, TyCtxt<'tcx>>;
 
     fn kind(self) -> Self::Kind {
         self.kind()
@@ -551,7 +574,8 @@ impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for Term<'tcx> {
 
 impl<'tcx> Term<'tcx> {
     #[inline]
-    pub fn kind(self) -> TermKind<'tcx> {
+    pub fn kind<'a>(self) -> rustc_type_ir::TermKind<'a, TyCtxt<'tcx>> {
+        use rustc_type_ir::TermKind;
         let ptr =
             unsafe { self.ptr.map_addr(|addr| NonZero::new_unchecked(addr.get() & !TAG_MASK)) };
         // SAFETY: use of `Interned::new_unchecked` here is ok because these
@@ -630,7 +654,7 @@ impl<'tcx> Term<'tcx> {
     /// Foo<Bar<isize>> => { Foo<Bar<isize>>, Bar<isize>, isize }
     /// [isize] => { [isize], isize }
     /// ```
-    pub fn walk(self) -> TypeWalker<TyCtxt<'tcx>> {
+    pub fn walk(self) -> TypeWalker<'tcx, TyCtxt<'tcx>> {
         TypeWalker::new(self.into())
     }
 }
@@ -1019,8 +1043,11 @@ pub struct ParamEnv<'tcx> {
     caller_bounds: Clauses<'tcx>,
 }
 
-impl<'tcx> rustc_type_ir::inherent::ParamEnv<TyCtxt<'tcx>> for ParamEnv<'tcx> {
-    fn caller_bounds(self) -> impl inherent::SliceLike<Item = ty::Clause<'tcx>> {
+impl<'a, 'tcx> rustc_type_ir::inherent::ParamEnv<'a, TyCtxt<'tcx>> for ParamEnv<'tcx>
+where
+    'tcx: 'a,
+{
+    fn caller_bounds(self) -> impl inherent::SliceLike<'a, Item = ty::Clause<'tcx>> {
         self.caller_bounds()
     }
 }

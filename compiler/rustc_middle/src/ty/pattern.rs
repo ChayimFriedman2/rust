@@ -115,9 +115,9 @@ impl<'tcx> IrPrint<PatternKind<'tcx>> for TyCtxt<'tcx> {
     }
 }
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Pattern<'tcx> {
+impl<'tcx> rustc_type_ir::inherent::AsKind for Pattern<'tcx> {
     type Kind = PatternKind<'tcx>;
-    fn kind(self) -> Self::Kind {
-        *self
+    fn kind(&self) -> &Self::Kind {
+        self.0.0
     }
 }

@@ -98,29 +98,29 @@ pub trait TypeVisitor<I: Interner>: Sized {
         t.super_visit_with(self)
     }
 
-    fn visit_ty(&mut self, t: I::Ty) -> Self::Result {
+    fn visit_ty(&mut self, t: I::TyRef<'_>) -> Self::Result {
         t.super_visit_with(self)
     }
 
     // The default region visitor is a no-op because `Region` is non-recursive
     // and has no `super_visit_with` method to call.
-    fn visit_region(&mut self, r: I::Region) -> Self::Result {
+    fn visit_region(&mut self, r: I::RegionRef<'_>) -> Self::Result {
         if let ty::ReError(guar) = r.kind() {
-            self.visit_error(guar)
+            self.visit_error(*guar)
         } else {
             Self::Result::output()
         }
     }
 
-    fn visit_const(&mut self, c: I::Const) -> Self::Result {
+    fn visit_const(&mut self, c: I::ConstRef<'_>) -> Self::Result {
         c.super_visit_with(self)
     }
 
-    fn visit_predicate(&mut self, p: I::Predicate) -> Self::Result {
+    fn visit_predicate(&mut self, p: I::PredicateRef<'_>) -> Self::Result {
         p.super_visit_with(self)
     }
 
-    fn visit_clauses(&mut self, c: I::Clauses) -> Self::Result {
+    fn visit_clauses(&mut self, c: I::ClausesRef<'_>) -> Self::Result {
         c.super_visit_with(self)
     }
 
@@ -203,10 +203,18 @@ impl<I: Interner, T: TypeVisitable<I>, const N: usize> TypeVisitable<I> for Smal
 // `TypeFoldable` isn't impl'd for `&[T]`. It doesn't make sense in the general
 // case, because we can't return a new slice. But note that there are a couple
 // of trivial impls of `TypeFoldable` for specific slice types elsewhere.
-impl<I: Interner, T: TypeVisitable<I>> TypeVisitable<I> for &[T] {
+impl<I: Interner, T: TypeVisitable<I>> TypeVisitable<I> for [T] {
     fn visit_with<V: TypeVisitor<I>>(&self, visitor: &mut V) -> V::Result {
         walk_visitable_list!(visitor, self.iter());
         V::Result::output()
+    }
+}
+
+// `TypeFoldable` isn't impl'd for `&T`. It doesn't make sense in the general
+// case, because we can't return a new ref.
+impl<I: Interner, T: TypeVisitable<I> + ?Sized> TypeVisitable<I> for &T {
+    fn visit_with<V: TypeVisitor<I>>(&self, visitor: &mut V) -> V::Result {
+        T::visit_with(self, visitor)
     }
 }
 
@@ -417,7 +425,7 @@ impl<I: Interner> TypeVisitor<I> for HasTypeFlagsVisitor {
     }
 
     #[inline]
-    fn visit_ty(&mut self, t: I::Ty) -> Self::Result {
+    fn visit_ty(&mut self, t: I::TyRef<'_>) -> Self::Result {
         // Note: no `super_visit_with` call.
         let flags = t.flags();
         if flags.intersects(self.flags) {
@@ -428,7 +436,7 @@ impl<I: Interner> TypeVisitor<I> for HasTypeFlagsVisitor {
     }
 
     #[inline]
-    fn visit_region(&mut self, r: I::Region) -> Self::Result {
+    fn visit_region(&mut self, r: I::RegionRef<'_>) -> Self::Result {
         // Note: no `super_visit_with` call, as usual for `Region`.
         let flags = r.flags();
         if flags.intersects(self.flags) {
@@ -439,7 +447,7 @@ impl<I: Interner> TypeVisitor<I> for HasTypeFlagsVisitor {
     }
 
     #[inline]
-    fn visit_const(&mut self, c: I::Const) -> Self::Result {
+    fn visit_const(&mut self, c: I::ConstRef<'_>) -> Self::Result {
         // Note: no `super_visit_with` call.
         if c.flags().intersects(self.flags) {
             ControlFlow::Break(FoundFlags)
@@ -449,7 +457,7 @@ impl<I: Interner> TypeVisitor<I> for HasTypeFlagsVisitor {
     }
 
     #[inline]
-    fn visit_predicate(&mut self, predicate: I::Predicate) -> Self::Result {
+    fn visit_predicate(&mut self, predicate: I::PredicateRef<'_>) -> Self::Result {
         // Note: no `super_visit_with` call.
         if predicate.flags().intersects(self.flags) {
             ControlFlow::Break(FoundFlags)
@@ -459,7 +467,7 @@ impl<I: Interner> TypeVisitor<I> for HasTypeFlagsVisitor {
     }
 
     #[inline]
-    fn visit_clauses(&mut self, clauses: I::Clauses) -> Self::Result {
+    fn visit_clauses(&mut self, clauses: I::ClausesRef<'_>) -> Self::Result {
         // Note: no `super_visit_with` call.
         if clauses.flags().intersects(self.flags) {
             ControlFlow::Break(FoundFlags)
@@ -522,7 +530,7 @@ impl<I: Interner> TypeVisitor<I> for HasEscapingVarsVisitor {
     }
 
     #[inline]
-    fn visit_ty(&mut self, t: I::Ty) -> Self::Result {
+    fn visit_ty(&mut self, t: I::TyRef<'_>) -> Self::Result {
         // If the outer-exclusive-binder is *strictly greater* than
         // `outer_index`, that means that `t` contains some content
         // bound at `outer_index` or above (because
@@ -536,7 +544,7 @@ impl<I: Interner> TypeVisitor<I> for HasEscapingVarsVisitor {
     }
 
     #[inline]
-    fn visit_region(&mut self, r: I::Region) -> Self::Result {
+    fn visit_region(&mut self, r: I::RegionRef<'_>) -> Self::Result {
         // If the region is bound by `outer_index` or anything outside
         // of outer index, then it escapes the binders we have
         // visited.
@@ -547,7 +555,7 @@ impl<I: Interner> TypeVisitor<I> for HasEscapingVarsVisitor {
         }
     }
 
-    fn visit_const(&mut self, ct: I::Const) -> Self::Result {
+    fn visit_const(&mut self, ct: I::ConstRef<'_>) -> Self::Result {
         // If the outer-exclusive-binder is *strictly greater* than
         // `outer_index`, that means that `ct` contains some content
         // bound at `outer_index` or above (because
@@ -561,7 +569,7 @@ impl<I: Interner> TypeVisitor<I> for HasEscapingVarsVisitor {
     }
 
     #[inline]
-    fn visit_predicate(&mut self, predicate: I::Predicate) -> Self::Result {
+    fn visit_predicate(&mut self, predicate: I::PredicateRef<'_>) -> Self::Result {
         if predicate.outer_exclusive_binder() > self.outer_index {
             ControlFlow::Break(FoundEscapingVars)
         } else {
@@ -570,7 +578,7 @@ impl<I: Interner> TypeVisitor<I> for HasEscapingVarsVisitor {
     }
 
     #[inline]
-    fn visit_clauses(&mut self, clauses: I::Clauses) -> Self::Result {
+    fn visit_clauses(&mut self, clauses: I::ClausesRef<'_>) -> Self::Result {
         if clauses.outer_exclusive_binder() > self.outer_index {
             ControlFlow::Break(FoundEscapingVars)
         } else {

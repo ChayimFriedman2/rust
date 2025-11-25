@@ -2,6 +2,7 @@
 //! behaves differently depending on the current `TypingMode`.
 
 use rustc_type_ir::inherent::*;
+use rustc_type_ir::ir_traits::*;
 use rustc_type_ir::solve::GoalSource;
 use rustc_type_ir::{self as ty, Interner, TypingMode, fold_regions};
 
@@ -15,11 +16,11 @@ where
 {
     pub(super) fn normalize_opaque_type(
         &mut self,
-        goal: Goal<I, ty::NormalizesTo<I>>,
+        goal: &Goal<I, ty::NormalizesTo<I>>,
     ) -> QueryResult<I> {
         let cx = self.cx();
-        let opaque_ty = goal.predicate.alias;
-        let expected = goal.predicate.term.as_type().expect("no such thing as an opaque const");
+        let opaque_ty = &goal.predicate.alias;
+        let expected = goal.predicate.term.r().as_type().expect("no such thing as an opaque const");
 
         match self.typing_mode() {
             TypingMode::Coherence => {
@@ -27,8 +28,8 @@ where
                 // e.g. assigning `impl Copy := NotCopy`
                 self.add_item_bounds_for_hidden_type(
                     opaque_ty.def_id,
-                    opaque_ty.args,
-                    goal.param_env,
+                    opaque_ty.args.r(),
+                    goal.param_env.r(),
                     expected,
                 );
                 // Trying to normalize an opaque type during coherence is always ambiguous.
@@ -45,10 +46,10 @@ where
                 let Some(def_id) = opaque_ty
                     .def_id
                     .as_local()
-                    .filter(|&def_id| defining_opaque_types.contains(&def_id))
+                    .filter(|&def_id| defining_opaque_types.r().contains(&def_id))
                 else {
                     // If we're not in the defining scope, treat the alias as rigid.
-                    self.structurally_instantiate_normalizes_to_term(goal, goal.predicate.alias);
+                    self.structurally_instantiate_normalizes_to_term(goal, &goal.predicate.alias);
                     return self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes);
                 };
 
@@ -63,20 +64,23 @@ where
                 // `structurally_normalize` and because we use structural lookup, we also don't
                 // reuse an entry for `Tait<for<'a> fn(&'a ())>` for `Tait<for<'b> fn(&'b ())>`.
                 let normalized_args =
-                    cx.mk_args_from_iter(opaque_ty.args.iter().map(|arg| match arg.kind() {
-                        ty::GenericArgKind::Lifetime(lt) => Ok(lt.into()),
-                        ty::GenericArgKind::Type(ty) => {
-                            self.structurally_normalize_ty(goal.param_env, ty).map(Into::into)
-                        }
-                        ty::GenericArgKind::Const(ct) => {
-                            self.structurally_normalize_const(goal.param_env, ct).map(Into::into)
+                    cx.mk_args_from_iter(opaque_ty.args.r().iter().map(|arg| {
+                        match arg.kind() {
+                            ty::GenericArgKind::Lifetime(lt) => Ok(lt.o().into()),
+                            ty::GenericArgKind::Type(ty) => self
+                                .structurally_normalize_ty(goal.param_env.r(), ty.o())
+                                .map(Into::into),
+                            ty::GenericArgKind::Const(ct) => self
+                                .structurally_normalize_const(goal.param_env.r(), ct.o())
+                                .map(Into::into),
                         }
                     }))?;
 
-                let opaque_type_key = ty::OpaqueTypeKey { def_id, args: normalized_args };
-                if let Some(prev) = self.register_hidden_type_in_storage(opaque_type_key, expected)
+                let opaque_type_key = ty::OpaqueTypeKey { def_id, args: normalized_args.clone() };
+                if let Some(prev) =
+                    self.register_hidden_type_in_storage(&opaque_type_key, expected.o())
                 {
-                    self.eq(goal.param_env, expected, prev)?;
+                    self.eq(goal.param_env.r(), expected.reborrow(), prev.r())?;
                 } else {
                     // During HIR typeck, opaque types start out as unconstrained
                     // inference variables. In borrowck we instead use the type
@@ -86,12 +90,12 @@ where
                         TypingMode::Borrowck { .. } => {
                             let actual = cx
                                 .type_of_opaque_hir_typeck(def_id)
-                                .instantiate(cx, opaque_ty.args);
+                                .instantiate(cx, opaque_ty.args.r());
                             let actual = fold_regions(cx, actual, |re, _dbi| match re.kind() {
                                 ty::ReErased => self.next_region_var(),
                                 _ => re,
                             });
-                            self.eq(goal.param_env, expected, actual)?;
+                            self.eq(goal.param_env.r(), expected.reborrow(), actual.r())?;
                         }
                         _ => unreachable!(),
                     }
@@ -99,8 +103,8 @@ where
 
                 self.add_item_bounds_for_hidden_type(
                     def_id.into(),
-                    normalized_args,
-                    goal.param_env,
+                    normalized_args.r(),
+                    goal.param_env.r(),
                     expected,
                 );
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
@@ -109,13 +113,13 @@ where
                 let Some(def_id) = opaque_ty
                     .def_id
                     .as_local()
-                    .filter(|&def_id| defined_opaque_types.contains(&def_id))
+                    .filter(|&def_id| defined_opaque_types.r().contains(&def_id))
                 else {
-                    self.structurally_instantiate_normalizes_to_term(goal, goal.predicate.alias);
+                    self.structurally_instantiate_normalizes_to_term(goal, &goal.predicate.alias);
                     return self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes);
                 };
 
-                let actual = cx.type_of(def_id.into()).instantiate(cx, opaque_ty.args);
+                let actual = cx.type_of(def_id.into()).instantiate(cx, opaque_ty.args.r());
                 // FIXME: Actually use a proper binder here instead of relying on `ReErased`.
                 //
                 // This is also probably unsound or sth :shrug:
@@ -123,13 +127,13 @@ where
                     ty::ReErased => self.next_region_var(),
                     _ => re,
                 });
-                self.eq(goal.param_env, expected, actual)?;
+                self.eq(goal.param_env.r(), expected, actual.r())?;
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
             }
             TypingMode::PostAnalysis => {
                 // FIXME: Add an assertion that opaque type storage is empty.
-                let actual = cx.type_of(opaque_ty.def_id).instantiate(cx, opaque_ty.args);
-                self.eq(goal.param_env, expected, actual)?;
+                let actual = cx.type_of(opaque_ty.def_id).instantiate(cx, opaque_ty.args.r());
+                self.eq(goal.param_env.r(), expected, actual.r())?;
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
             }
         }

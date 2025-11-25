@@ -751,7 +751,7 @@ impl<'tcx> CloneShimBuilder<'tcx> {
         dest: Place<'tcx>,
         src: Place<'tcx>,
         coroutine_def_id: DefId,
-        args: CoroutineArgs<TyCtxt<'tcx>>,
+        args: CoroutineArgs<'tcx>,
     ) {
         self.block(vec![], TerminatorKind::Goto { target: self.block_index_offset(3) }, false);
         let unwind = self.block(vec![], TerminatorKind::UnwindResume, true);

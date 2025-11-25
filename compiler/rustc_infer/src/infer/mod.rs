@@ -1283,9 +1283,9 @@ impl<'tcx> InferCtxt<'tcx> {
         value: ty::Binder<'tcx, T>,
     ) -> T
     where
-        T: TypeFoldable<TyCtxt<'tcx>> + Copy,
+        T: TypeFoldable<TyCtxt<'tcx>> + Clone,
     {
-        if let Some(inner) = value.no_bound_vars() {
+        if let Some(inner) = value.clone().no_bound_vars() {
             return inner;
         }
 

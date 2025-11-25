@@ -23,6 +23,7 @@ mod trait_goals;
 
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;
+use rustc_type_ir::ir_traits::*;
 pub use rustc_type_ir::solve::*;
 use rustc_type_ir::{self as ty, Interner, TyVid, TypingMode};
 use tracing::instrument;
@@ -56,7 +57,7 @@ pub enum HasChanged {
 // FIXME(trait-system-refactor-initiative#117): we don't detect whether a response
 // ended up pulling down any universes.
 fn has_no_inference_or_external_constraints<I: Interner>(
-    response: ty::Canonical<I, Response<I>>,
+    response: &ty::Canonical<I, Response<I>>,
 ) -> bool {
     let ExternalConstraintsData {
         ref region_constraints,
@@ -69,7 +70,7 @@ fn has_no_inference_or_external_constraints<I: Interner>(
         && normalization_nested_goals.is_empty()
 }
 
-fn has_only_region_constraints<I: Interner>(response: ty::Canonical<I, Response<I>>) -> bool {
+fn has_only_region_constraints<I: Interner>(response: &ty::Canonical<I, Response<I>>) -> bool {
     let ExternalConstraintsData {
         region_constraints: _,
         ref opaque_types,
@@ -121,11 +122,11 @@ where
     fn compute_subtype_goal(&mut self, goal: Goal<I, ty::SubtypePredicate<I>>) -> QueryResult<I> {
         match (goal.predicate.a.kind(), goal.predicate.b.kind()) {
             (ty::Infer(ty::TyVar(a_vid)), ty::Infer(ty::TyVar(b_vid))) => {
-                self.sub_unify_ty_vids_raw(a_vid, b_vid);
+                self.sub_unify_ty_vids_raw(*a_vid, *b_vid);
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::AMBIGUOUS)
             }
             _ => {
-                self.sub(goal.param_env, goal.predicate.a, goal.predicate.b)?;
+                self.sub(goal.param_env.r(), goal.predicate.a.r(), goal.predicate.b.r())?;
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
             }
         }
@@ -141,7 +142,7 @@ where
 
     #[instrument(level = "trace", skip(self))]
     fn compute_well_formed_goal(&mut self, goal: Goal<I, I::Term>) -> QueryResult<I> {
-        match self.well_formed_goals(goal.param_env, goal.predicate) {
+        match self.well_formed_goals(goal.param_env.r(), goal.predicate.r()) {
             Some(goals) => {
                 self.add_goals(GoalSource::Misc, goals);
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
@@ -150,11 +151,14 @@ where
         }
     }
 
-    fn compute_unstable_feature_goal(
+    fn compute_unstable_feature_goal<'b>(
         &mut self,
-        param_env: <I as Interner>::ParamEnv,
+        param_env: <I as Interner>::ParamEnvRef<'b>,
         symbol: <I as Interner>::Symbol,
-    ) -> QueryResult<I> {
+    ) -> QueryResult<I>
+    where
+        I: 'b,
+    {
         if self.may_use_unstable_feature(param_env, symbol) {
             self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
         } else {
@@ -180,7 +184,7 @@ where
 
                 // FIXME(generic_const_exprs): Implement handling for generic
                 // const expressions here.
-                if let Some(_normalized) = self.evaluate_const(param_env, uv) {
+                if let Some(_normalized) = self.evaluate_const(param_env.r(), uv.clone()) {
                     self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
                 } else {
                     self.evaluate_added_goals_and_make_canonical_response(Certainty::AMBIGUOUS)
@@ -205,10 +209,11 @@ where
     #[instrument(level = "trace", skip(self), ret)]
     fn compute_const_arg_has_type_goal(
         &mut self,
-        goal: Goal<I, (I::Const, I::Ty)>,
+        goal: &Goal<I, (I::Const, I::Ty)>,
     ) -> QueryResult<I> {
-        let (ct, ty) = goal.predicate;
-        let ct = self.structurally_normalize_const(goal.param_env, ct)?;
+        let param_env = goal.param_env.r();
+        let (ct, ty) = (goal.predicate.0.r(), goal.predicate.1.r());
+        let ct = self.structurally_normalize_const(param_env, ct.o())?;
 
         let ct_ty = match ct.kind() {
             ty::ConstKind::Infer(_) => {
@@ -218,7 +223,7 @@ where
                 return self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes);
             }
             ty::ConstKind::Unevaluated(uv) => {
-                self.cx().type_of(uv.def.into()).instantiate(self.cx(), uv.args)
+                self.cx().type_of(uv.def.into()).instantiate(self.cx(), uv.args.r())
             }
             ty::ConstKind::Expr(_) => unimplemented!(
                 "`feature(generic_const_exprs)` is not supported in the new trait solver"
@@ -227,13 +232,13 @@ where
                 unreachable!("`ConstKind::Param` should have been canonicalized to `Placeholder`")
             }
             ty::ConstKind::Bound(_, _) => panic!("escaping bound vars in {:?}", ct),
-            ty::ConstKind::Value(cv) => cv.ty(),
-            ty::ConstKind::Placeholder(placeholder) => {
-                placeholder.find_const_ty_from_env(goal.param_env)
+            ty::ConstKind::Value(cv) => cv.ty().o(),
+            &ty::ConstKind::Placeholder(placeholder) => {
+                placeholder.find_const_ty_from_env(param_env).o()
             }
         };
 
-        self.eq(goal.param_env, ct_ty, ty)?;
+        self.eq(param_env, ct_ty.r(), ty)?;
         self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
     }
 }
@@ -253,24 +258,24 @@ where
     ///
     /// In this case we tend to flounder and return ambiguity by calling `[EvalCtxt::flounder]`.
     #[instrument(level = "trace", skip(self), ret)]
-    fn try_merge_candidates(
+    fn try_merge_candidates<'a>(
         &mut self,
-        candidates: &[Candidate<I>],
-    ) -> Option<(CanonicalResponse<I>, MergeCandidateInfo)> {
+        candidates: &'a [Candidate<I>],
+    ) -> Option<(&'a CanonicalResponse<I>, MergeCandidateInfo)> {
         if candidates.is_empty() {
             return None;
         }
 
         let always_applicable = candidates.iter().enumerate().find(|(_, candidate)| {
             candidate.result.value.certainty == Certainty::Yes
-                && has_no_inference_or_external_constraints(candidate.result)
+                && has_no_inference_or_external_constraints(&candidate.result)
         });
         if let Some((i, c)) = always_applicable {
-            return Some((c.result, MergeCandidateInfo::AlwaysApplicable(i)));
+            return Some((&c.result, MergeCandidateInfo::AlwaysApplicable(i)));
         }
 
-        let one: CanonicalResponse<I> = candidates[0].result;
-        if candidates[1..].iter().all(|candidate| candidate.result == one) {
+        let one = &candidates[0].result;
+        if candidates[1..].iter().all(|candidate| candidate.result == *one) {
             return Some((one, MergeCandidateInfo::EqualResponse));
         }
 
@@ -314,7 +319,7 @@ where
     #[instrument(level = "trace", skip(self, param_env), ret)]
     fn structurally_normalize_ty(
         &mut self,
-        param_env: I::ParamEnv,
+        param_env: I::ParamEnvRef<'_>,
         ty: I::Ty,
     ) -> Result<I::Ty, NoSolution> {
         self.structurally_normalize_term(param_env, ty.into()).map(|term| term.expect_ty())
@@ -329,7 +334,7 @@ where
     #[instrument(level = "trace", skip(self, param_env), ret)]
     fn structurally_normalize_const(
         &mut self,
-        param_env: I::ParamEnv,
+        param_env: I::ParamEnvRef<'_>,
         ct: I::Const,
     ) -> Result<I::Const, NoSolution> {
         self.structurally_normalize_term(param_env, ct.into()).map(|term| term.expect_const())
@@ -341,17 +346,17 @@ where
     /// Not doing so is likely to be incomplete and therefore unsound during coherence.
     fn structurally_normalize_term(
         &mut self,
-        param_env: I::ParamEnv,
+        param_env: I::ParamEnvRef<'_>,
         term: I::Term,
     ) -> Result<I::Term, NoSolution> {
-        if let Some(_) = term.to_alias_term() {
-            let normalized_term = self.next_term_infer_of_kind(term);
+        if term.r().is_alias_term() {
+            let normalized_term = self.next_term_infer_of_kind(term.r());
             let alias_relate_goal = Goal::new(
                 self.cx(),
-                param_env,
+                param_env.o(),
                 ty::PredicateKind::AliasRelate(
-                    term,
-                    normalized_term,
+                    term.clone(),
+                    normalized_term.clone(),
                     ty::AliasRelationDirection::Equate,
                 ),
             );
@@ -374,7 +379,7 @@ where
             TypingMode::Analysis { defining_opaque_types_and_generators: non_rigid_opaques }
             | TypingMode::Borrowck { defining_opaque_types: non_rigid_opaques }
             | TypingMode::PostBorrowckAnalysis { defined_opaque_types: non_rigid_opaques } => {
-                !def_id.as_local().is_some_and(|def_id| non_rigid_opaques.contains(&def_id))
+                !def_id.as_local().is_some_and(|def_id| non_rigid_opaques.r().contains(&def_id))
             }
         }
     }

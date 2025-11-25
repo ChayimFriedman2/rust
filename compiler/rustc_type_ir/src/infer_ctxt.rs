@@ -4,6 +4,7 @@ use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContex
 
 use crate::fold::TypeFoldable;
 use crate::inherent::*;
+use crate::ir_traits::*;
 use crate::relate::RelateResult;
 use crate::relate::combine::PredicateEmittingRelation;
 use crate::{self as ty, Interner, TyVid};
@@ -18,7 +19,8 @@ use crate::{self as ty, Interner, TyVid};
 ///
 /// If neither of these functions are available, feel free to reach out to
 /// t-types for help.
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Copy; I: Interner, I::LocalDefIds: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -118,7 +120,7 @@ impl<I: Interner> TypingMode<I> {
 
     pub fn borrowck(cx: I, body_def_id: I::LocalDefId) -> TypingMode<I> {
         let defining_opaque_types = cx.opaque_types_defined_by(body_def_id);
-        if defining_opaque_types.is_empty() {
+        if defining_opaque_types.r().is_empty() {
             TypingMode::non_body_analysis()
         } else {
             TypingMode::Borrowck { defining_opaque_types }
@@ -127,7 +129,7 @@ impl<I: Interner> TypingMode<I> {
 
     pub fn post_borrowck_analysis(cx: I, body_def_id: I::LocalDefId) -> TypingMode<I> {
         let defined_opaque_types = cx.opaque_types_defined_by(body_def_id);
-        if defined_opaque_types.is_empty() {
+        if defined_opaque_types.r().is_empty() {
             TypingMode::non_body_analysis()
         } else {
             TypingMode::PostBorrowckAnalysis { defined_opaque_types }
@@ -148,7 +150,7 @@ pub trait InferCtxtLike: Sized {
         true
     }
 
-    fn typing_mode(&self) -> TypingMode<Self::Interner>;
+    fn typing_mode(&self) -> &TypingMode<Self::Interner>;
 
     fn universe(&self) -> ty::UniverseIndex;
     fn create_next_universe(&self) -> ty::UniverseIndex;
@@ -176,7 +178,7 @@ pub trait InferCtxtLike: Sized {
         vid: ty::RegionVid,
     ) -> <Self::Interner as Interner>::Region;
 
-    fn is_changed_arg(&self, arg: <Self::Interner as Interner>::GenericArg) -> bool;
+    fn is_changed_arg(&self, arg: <Self::Interner as Interner>::GenericArgRef<'_>) -> bool;
 
     fn next_region_infer(&self) -> <Self::Interner as Interner>::Region;
     fn next_ty_infer(&self) -> <Self::Interner as Interner>::Ty;
@@ -186,7 +188,7 @@ pub trait InferCtxtLike: Sized {
         def_id: <Self::Interner as Interner>::DefId,
     ) -> <Self::Interner as Interner>::GenericArgs;
 
-    fn instantiate_binder_with_infer<T: TypeFoldable<Self::Interner> + Copy>(
+    fn instantiate_binder_with_infer<T: TypeFoldable<Self::Interner> + Clone>(
         &self,
         value: ty::Binder<Self::Interner, T>,
     ) -> T;
@@ -275,13 +277,13 @@ pub trait InferCtxtLike: Sized {
 
     fn register_hidden_type_in_storage(
         &self,
-        opaque_type_key: ty::OpaqueTypeKey<Self::Interner>,
+        opaque_type_key: &ty::OpaqueTypeKey<Self::Interner>,
         hidden_ty: <Self::Interner as Interner>::Ty,
         span: <Self::Interner as Interner>::Span,
     ) -> Option<<Self::Interner as Interner>::Ty>;
     fn add_duplicate_opaque_type(
         &self,
-        opaque_type_key: ty::OpaqueTypeKey<Self::Interner>,
+        opaque_type_key: &ty::OpaqueTypeKey<Self::Interner>,
         hidden_ty: <Self::Interner as Interner>::Ty,
         span: <Self::Interner as Interner>::Span,
     );
@@ -289,9 +291,9 @@ pub trait InferCtxtLike: Sized {
     fn reset_opaque_types(&self);
 }
 
-pub fn may_use_unstable_feature<'a, I: Interner, Infcx>(
+pub fn may_use_unstable_feature<'a, 'b, I: Interner + 'b, Infcx>(
     infcx: &'a Infcx,
-    param_env: I::ParamEnv,
+    param_env: I::ParamEnvRef<'b>,
     symbol: I::Symbol,
 ) -> bool
 where
@@ -299,8 +301,8 @@ where
 {
     // Iterate through all goals in param_env to find the one that has the same symbol.
     for pred in param_env.caller_bounds().iter() {
-        if let ty::ClauseKind::UnstableFeature(sym) = pred.kind().skip_binder() {
-            if sym == symbol {
+        if let ty::ClauseKind::UnstableFeature(sym) = pred.kind().skip_binder_ref() {
+            if *sym == symbol {
                 return true;
             }
         }
@@ -322,6 +324,6 @@ where
     // Note: `feature_bound_holds_in_crate` does not consider a feature to be enabled
     // if we are in std/core even if there is a corresponding `feature` attribute on the crate.
 
-    (infcx.typing_mode() == TypingMode::PostAnalysis)
+    (*infcx.typing_mode() == TypingMode::PostAnalysis)
         || infcx.cx().features().feature_bound_holds_in_crate(symbol)
 }

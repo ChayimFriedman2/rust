@@ -199,12 +199,12 @@ impl<'tcx> Value<'tcx> {
 }
 
 impl<'tcx> rustc_type_ir::inherent::ValueConst<TyCtxt<'tcx>> for Value<'tcx> {
-    fn ty(self) -> Ty<'tcx> {
+    fn ty(&self) -> Ty<'tcx> {
         self.ty
     }
 
-    fn valtree(self) -> ValTree<'tcx> {
-        self.valtree
+    fn valtree(&self) -> &ValTree<'tcx> {
+        &self.valtree
     }
 }
 

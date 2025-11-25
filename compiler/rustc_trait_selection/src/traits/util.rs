@@ -127,7 +127,7 @@ pub(crate) fn coroutine_trait_ref_and_outputs<'tcx>(
     tcx: TyCtxt<'tcx>,
     fn_trait_def_id: DefId,
     self_ty: Ty<'tcx>,
-    sig: ty::GenSig<TyCtxt<'tcx>>,
+    sig: ty::GenSig<'tcx>,
 ) -> (ty::TraitRef<'tcx>, Ty<'tcx>, Ty<'tcx>) {
     assert!(!self_ty.has_escaping_bound_vars());
     let trait_ref = ty::TraitRef::new(tcx, fn_trait_def_id, [self_ty, sig.resume_ty]);
@@ -138,7 +138,7 @@ pub(crate) fn future_trait_ref_and_outputs<'tcx>(
     tcx: TyCtxt<'tcx>,
     fn_trait_def_id: DefId,
     self_ty: Ty<'tcx>,
-    sig: ty::GenSig<TyCtxt<'tcx>>,
+    sig: ty::GenSig<'tcx>,
 ) -> (ty::TraitRef<'tcx>, Ty<'tcx>) {
     assert!(!self_ty.has_escaping_bound_vars());
     let trait_ref = ty::TraitRef::new(tcx, fn_trait_def_id, [self_ty]);
@@ -149,7 +149,7 @@ pub(crate) fn iterator_trait_ref_and_outputs<'tcx>(
     tcx: TyCtxt<'tcx>,
     iterator_def_id: DefId,
     self_ty: Ty<'tcx>,
-    sig: ty::GenSig<TyCtxt<'tcx>>,
+    sig: ty::GenSig<'tcx>,
 ) -> (ty::TraitRef<'tcx>, Ty<'tcx>) {
     assert!(!self_ty.has_escaping_bound_vars());
     let trait_ref = ty::TraitRef::new(tcx, iterator_def_id, [self_ty]);
@@ -160,7 +160,7 @@ pub(crate) fn async_iterator_trait_ref_and_outputs<'tcx>(
     tcx: TyCtxt<'tcx>,
     async_iterator_def_id: DefId,
     self_ty: Ty<'tcx>,
-    sig: ty::GenSig<TyCtxt<'tcx>>,
+    sig: ty::GenSig<'tcx>,
 ) -> (ty::TraitRef<'tcx>, Ty<'tcx>) {
     assert!(!self_ty.has_escaping_bound_vars());
     let trait_ref = ty::TraitRef::new(tcx, async_iterator_def_id, [self_ty]);

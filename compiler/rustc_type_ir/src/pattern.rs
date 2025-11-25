@@ -5,7 +5,8 @@ use rustc_type_ir_macros::{Lift_Generic, TypeFoldable_Generic, TypeVisitable_Gen
 
 use crate::Interner;
 
-#[derive_where(Clone, Copy, Hash, PartialEq; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq; I: Interner)]
+#[derive_where(Copy; I: Interner, I::Const: Copy, I::PatList: Copy)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
 #[cfg_attr(
     feature = "nightly",

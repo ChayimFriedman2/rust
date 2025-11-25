@@ -264,9 +264,8 @@ impl<'tcx> InferCtxt<'tcx> {
 
         for (index, original_value) in original_values.var_values.iter().enumerate() {
             // ...with the value `v_r` of that variable from the query.
-            let result_value = query_response.instantiate_projected(self.tcx, &result_args, |v| {
-                v.var_values[BoundVar::new(index)]
-            });
+            let result_value = query_response
+                .instantiate_projected(self.tcx, &result_args, |v| v.var_values.var_values[index]);
             match (original_value.kind(), result_value.kind()) {
                 (GenericArgKind::Lifetime(re1), GenericArgKind::Lifetime(re2))
                     if re1.is_erased() && re2.is_erased() =>
@@ -542,7 +541,9 @@ impl<'tcx> InferCtxt<'tcx> {
         // `query_response.var_values` after applying the instantiation
         // by `result_args`.
         let instantiated_query_response = |index: BoundVar| -> GenericArg<'tcx> {
-            query_response.instantiate_projected(self.tcx, result_args, |v| v.var_values[index])
+            query_response.instantiate_projected(self.tcx, result_args, |v| {
+                v.var_values.var_values[index.as_usize()]
+            })
         };
 
         // Unify the original value for each variable with the value

@@ -22,8 +22,8 @@ impl<'tcx> rustc_type_ir::InferCtxtLike for InferCtxt<'tcx> {
         self.next_trait_solver
     }
 
-    fn typing_mode(&self) -> ty::TypingMode<'tcx> {
-        self.typing_mode()
+    fn typing_mode(&self) -> &ty::TypingMode<'tcx> {
+        &self.typing_mode
     }
 
     fn universe(&self) -> ty::UniverseIndex {
@@ -160,7 +160,7 @@ impl<'tcx> rustc_type_ir::InferCtxtLike for InferCtxt<'tcx> {
         self.fresh_args_for_item(DUMMY_SP, def_id)
     }
 
-    fn instantiate_binder_with_infer<T: TypeFoldable<TyCtxt<'tcx>> + Copy>(
+    fn instantiate_binder_with_infer<T: TypeFoldable<TyCtxt<'tcx>>>(
         &self,
         value: ty::Binder<'tcx, T>,
     ) -> T {
@@ -308,25 +308,25 @@ impl<'tcx> rustc_type_ir::InferCtxtLike for InferCtxt<'tcx> {
 
     fn register_hidden_type_in_storage(
         &self,
-        opaque_type_key: ty::OpaqueTypeKey<'tcx>,
+        opaque_type_key: &ty::OpaqueTypeKey<'tcx>,
         hidden_ty: Ty<'tcx>,
         span: Span,
     ) -> Option<Ty<'tcx>> {
         self.register_hidden_type_in_storage(
-            opaque_type_key,
+            *opaque_type_key,
             ty::ProvisionalHiddenType { span, ty: hidden_ty },
         )
     }
     fn add_duplicate_opaque_type(
         &self,
-        opaque_type_key: ty::OpaqueTypeKey<'tcx>,
+        opaque_type_key: &ty::OpaqueTypeKey<'tcx>,
         hidden_ty: Ty<'tcx>,
         span: Span,
     ) {
         self.inner
             .borrow_mut()
             .opaque_types()
-            .add_duplicate(opaque_type_key, ty::ProvisionalHiddenType { span, ty: hidden_ty })
+            .add_duplicate(*opaque_type_key, ty::ProvisionalHiddenType { span, ty: hidden_ty })
     }
 
     fn reset_opaque_types(&self) {

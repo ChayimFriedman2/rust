@@ -1,5 +1,4 @@
 use std::fmt;
-use std::ops::Index;
 
 use arrayvec::ArrayVec;
 use derive_where::derive_where;
@@ -9,10 +8,11 @@ use rustc_type_ir_macros::{Lift_Generic, TypeFoldable_Generic, TypeVisitable_Gen
 
 use crate::data_structures::HashMap;
 use crate::inherent::*;
+use crate::ir_traits::*;
 use crate::{self as ty, Interner, TypingMode, UniverseIndex};
 
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, V)]
-#[derive_where(Copy; I: Interner, V: Copy)]
+#[derive_where(Copy; I: Interner, I::LocalDefIds: Copy, I::CanonicalVarKinds: Copy, V: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -28,7 +28,7 @@ impl<I: Interner, V: Eq> Eq for CanonicalQueryInput<I, V> {}
 /// variables have been rewritten to "canonical vars". These are
 /// numbered starting from 0 in order of first appearance.
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, V)]
-#[derive_where(Copy; I: Interner, V: Copy)]
+#[derive_where(Copy; I: Interner, I::CanonicalVarKinds: Copy, V: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -214,7 +214,8 @@ impl<I: Interner> CanonicalVarKind<I> {
 /// vectors with the original values that were replaced by canonical
 /// variables. You will need to supply it later to instantiate the
 /// canonicalized query response.
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Copy; I: Interner, I::GenericArgs: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -228,7 +229,7 @@ impl<I: Interner> Eq for CanonicalVarValues<I> {}
 
 impl<I: Interner> CanonicalVarValues<I> {
     pub fn is_identity(&self) -> bool {
-        self.var_values.iter().enumerate().all(|(bv, arg)| match arg.kind() {
+        self.var_values.r().iter().enumerate().all(|(bv, arg)| match arg.kind() {
             ty::GenericArgKind::Lifetime(r) => {
                 matches!(r.kind(), ty::ReBound(ty::BoundVarIndexKind::Canonical, br) if br.var().as_usize() == bv)
             }
@@ -243,7 +244,7 @@ impl<I: Interner> CanonicalVarValues<I> {
 
     pub fn is_identity_modulo_regions(&self) -> bool {
         let mut var = ty::BoundVar::ZERO;
-        for arg in self.var_values.iter() {
+        for arg in self.var_values.r().iter() {
             match arg.kind() {
                 ty::GenericArgKind::Lifetime(r) => {
                     if matches!(r.kind(), ty::ReBound(ty::BoundVarIndexKind::Canonical, br) if var == br.var())
@@ -277,7 +278,7 @@ impl<I: Interner> CanonicalVarValues<I> {
 
     // Given a list of canonical variables, construct a set of values which are
     // the identity response.
-    pub fn make_identity(cx: I, infos: I::CanonicalVarKinds) -> CanonicalVarValues<I> {
+    pub fn make_identity(cx: I, infos: I::CanonicalVarKindsRef<'_>) -> CanonicalVarValues<I> {
         CanonicalVarValues {
             var_values: cx.mk_args_from_iter(infos.iter().enumerate().map(
                 |(i, kind)| -> I::GenericArg {
@@ -308,7 +309,7 @@ impl<I: Interner> CanonicalVarValues<I> {
 
     pub fn instantiate(
         cx: I,
-        variables: I::CanonicalVarKinds,
+        variables: I::CanonicalVarKindsRef<'_>,
         mut f: impl FnMut(&[I::GenericArg], CanonicalVarKind<I>) -> I::GenericArg,
     ) -> CanonicalVarValues<I> {
         // Instantiating `CanonicalVarValues` is really hot, but limited to less than
@@ -318,7 +319,7 @@ impl<I: Interner> CanonicalVarValues<I> {
             for info in variables.iter() {
                 var_values.push(f(&var_values, info));
             }
-            CanonicalVarValues { var_values: cx.mk_args(&var_values) }
+            CanonicalVarValues { var_values: cx.mk_args_owned(&var_values) }
         } else {
             CanonicalVarValues::instantiate_cold(cx, variables, f)
         }
@@ -327,36 +328,28 @@ impl<I: Interner> CanonicalVarValues<I> {
     #[cold]
     fn instantiate_cold(
         cx: I,
-        variables: I::CanonicalVarKinds,
+        variables: I::CanonicalVarKindsRef<'_>,
         mut f: impl FnMut(&[I::GenericArg], CanonicalVarKind<I>) -> I::GenericArg,
     ) -> CanonicalVarValues<I> {
         let mut var_values = Vec::with_capacity(variables.len());
         for info in variables.iter() {
             var_values.push(f(&var_values, info));
         }
-        CanonicalVarValues { var_values: cx.mk_args(&var_values) }
+        CanonicalVarValues { var_values: cx.mk_args_owned(&var_values) }
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.var_values.len()
+        self.var_values.r().len()
     }
 }
 
 impl<'a, I: Interner> IntoIterator for &'a CanonicalVarValues<I> {
-    type Item = I::GenericArg;
-    type IntoIter = <I::GenericArgs as SliceLike>::IntoIter;
+    type Item = I::GenericArgRef<'a>;
+    type IntoIter = std::iter::Copied<std::slice::Iter<'a, I::GenericArgRef<'a>>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.var_values.iter()
-    }
-}
-
-impl<I: Interner> Index<ty::BoundVar> for CanonicalVarValues<I> {
-    type Output = I::GenericArg;
-
-    fn index(&self, value: ty::BoundVar) -> &I::GenericArg {
-        &self.var_values.as_slice()[value.as_usize()]
+        self.var_values.r().iter()
     }
 }
 

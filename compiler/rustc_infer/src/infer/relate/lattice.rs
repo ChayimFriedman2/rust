@@ -22,6 +22,7 @@ use rustc_middle::ty::relate::combine::{super_combine_consts, super_combine_tys}
 use rustc_middle::ty::relate::{Relate, RelateResult, TypeRelation};
 use rustc_middle::ty::{self, Ty, TyCtxt, TyVar, TypeVisitableExt};
 use rustc_span::Span;
+use rustc_type_ir::relate::RelateRef;
 use tracing::{debug, instrument};
 
 use super::StructurallyRelateAliases;
@@ -81,20 +82,20 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for LatticeOp<'_, 'tcx> {
         _info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         match variance {
             ty::Invariant => {
                 self.obligations.extend(
                     self.infcx
                         .at(&self.trace.cause, self.param_env)
-                        .eq_trace(DefineOpaqueTypes::Yes, self.trace.clone(), a, b)?
+                        .eq_trace(DefineOpaqueTypes::Yes, self.trace.clone(), a.clone(), b)?
                         .into_obligations(),
                 );
-                Ok(a)
+                Ok(a.into_relate_result())
             }
             ty::Covariant => self.relate(a, b),
             // FIXME(#41044) -- not correct, need test
-            ty::Bivariant => Ok(a),
+            ty::Bivariant => Ok(a.into_relate_result()),
             ty::Contravariant => {
                 self.kind = self.kind.invert();
                 let res = self.relate(a, b);
@@ -197,26 +198,28 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for LatticeOp<'_, 'tcx> {
 
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        b: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        b: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
         // GLB/LUB of a binder and itself is just itself
         if a == b {
-            return Ok(a);
+            return Ok(a.clone());
         }
 
         debug!("binders(a={:?}, b={:?})", a, b);
-        if a.skip_binder().has_escaping_bound_vars() || b.skip_binder().has_escaping_bound_vars() {
+        if a.skip_binder_ref().has_escaping_bound_vars()
+            || b.skip_binder_ref().has_escaping_bound_vars()
+        {
             // When higher-ranked types are involved, computing the GLB/LUB is
             // very challenging, switch to invariance. This is obviously
             // overly conservative but works ok in practice.
             self.relate_with_variance(ty::Invariant, ty::VarianceDiagInfo::default(), a, b)?;
-            Ok(a)
+            Ok(a.clone())
         } else {
-            Ok(ty::Binder::dummy(self.relate(a.skip_binder(), b.skip_binder())?))
+            Ok(ty::Binder::dummy(self.relate(a.skip_binder_ref(), b.skip_binder_ref())?))
         }
     }
 }

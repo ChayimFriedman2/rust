@@ -16,6 +16,7 @@
 //! relate them structurally.
 
 use rustc_type_ir::inherent::*;
+use rustc_type_ir::ir_traits::*;
 use rustc_type_ir::solve::GoalSource;
 use rustc_type_ir::{self as ty, Interner};
 use tracing::{instrument, trace};
@@ -31,20 +32,19 @@ where
     #[instrument(level = "trace", skip(self), ret)]
     pub(super) fn compute_alias_relate_goal(
         &mut self,
-        goal: Goal<I, (I::Term, I::Term, ty::AliasRelationDirection)>,
+        goal: &Goal<I, (I::Term, I::Term, ty::AliasRelationDirection)>,
     ) -> QueryResult<I> {
         let cx = self.cx();
         let Goal { param_env, predicate: (lhs, rhs, direction) } = goal;
+        let param_env = param_env.r();
+        let (lhs, rhs) = (lhs.r(), rhs.r());
 
         // Check that the alias-relate goal is reasonable. Writeback for
         // `coroutine_stalled_predicates` can replace alias terms with
         // `{type error}` if the alias still contains infer vars, so we also
         // accept alias-relate goals where one of the terms is an error.
         debug_assert!(
-            lhs.to_alias_term().is_some()
-                || rhs.to_alias_term().is_some()
-                || lhs.is_error()
-                || rhs.is_error()
+            lhs.is_alias_term() || rhs.is_alias_term() || lhs.is_error() || rhs.is_error()
         );
 
         // Structurally normalize the lhs.
@@ -52,11 +52,11 @@ where
             let term = self.next_term_infer_of_kind(lhs);
             self.add_goal(
                 GoalSource::TypeRelating,
-                goal.with(cx, ty::NormalizesTo { alias, term }),
+                goal.with(cx, ty::NormalizesTo { alias, term: term.clone() }),
             );
             term
         } else {
-            lhs
+            lhs.o()
         };
 
         // Structurally normalize the rhs.
@@ -64,11 +64,11 @@ where
             let term = self.next_term_infer_of_kind(rhs);
             self.add_goal(
                 GoalSource::TypeRelating,
-                goal.with(cx, ty::NormalizesTo { alias, term }),
+                goal.with(cx, ty::NormalizesTo { alias, term: term.clone() }),
             );
             term
         } else {
-            rhs
+            rhs.o()
         };
 
         // Add a `make_canonical_response` probe step so that we treat this as
@@ -87,6 +87,7 @@ where
             ty::AliasRelationDirection::Equate => ty::Invariant,
             ty::AliasRelationDirection::Subtype => ty::Covariant,
         };
+        let (lhs, rhs) = (lhs.r(), rhs.r());
         match (lhs.to_alias_term(), rhs.to_alias_term()) {
             (None, None) => {
                 self.relate(param_env, lhs, variance, rhs)?;
@@ -94,13 +95,13 @@ where
             }
 
             (Some(alias), None) => {
-                self.relate_rigid_alias_non_alias(param_env, alias, variance, rhs)?;
+                self.relate_rigid_alias_non_alias(param_env, &alias, variance, rhs)?;
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
             }
             (None, Some(alias)) => {
                 self.relate_rigid_alias_non_alias(
                     param_env,
-                    alias,
+                    &alias,
                     variance.xform(ty::Contravariant),
                     lhs,
                 )?;
@@ -108,7 +109,7 @@ where
             }
 
             (Some(alias_lhs), Some(alias_rhs)) => {
-                self.relate(param_env, alias_lhs, variance, alias_rhs)?;
+                self.relate(param_env, &alias_lhs, variance, &alias_rhs)?;
                 self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
             }
         }

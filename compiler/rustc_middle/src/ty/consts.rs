@@ -27,11 +27,12 @@ rustc_data_structures::static_assert_size!(ConstKind<'_>, 24);
 #[rustc_pass_by_value]
 pub struct Const<'tcx>(pub(super) Interned<'tcx, WithCachedTypeInfo<ConstKind<'tcx>>>);
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Const<'tcx> {
+impl<'a, 'tcx> rustc_type_ir::inherent::AsKindRef<'a> for Const<'tcx> {
     type Kind = ConstKind<'tcx>;
 
-    fn kind(self) -> ConstKind<'tcx> {
-        self.kind()
+    #[inline]
+    fn kind(self) -> &'a ConstKind<'tcx> {
+        &self.0.0.internee
     }
 }
 
@@ -209,6 +210,8 @@ impl<'tcx> rustc_type_ir::inherent::Const<TyCtxt<'tcx>> for Const<'tcx> {
     }
 }
 
+impl<'tcx> rustc_type_ir::inherent::AnyConst<TyCtxt<'tcx>> for Const<'tcx> {}
+
 impl<'tcx> Const<'tcx> {
     /// Creates a constant with the given integer value and interns it.
     #[inline]
@@ -288,7 +291,7 @@ impl<'tcx> Const<'tcx> {
     /// Foo<Bar<isize>> => { Foo<Bar<isize>>, Bar<isize>, isize }
     /// [isize] => { [isize], isize }
     /// ```
-    pub fn walk(self) -> TypeWalker<TyCtxt<'tcx>> {
+    pub fn walk(self) -> TypeWalker<'tcx, TyCtxt<'tcx>> {
         TypeWalker::new(self.into())
     }
 }

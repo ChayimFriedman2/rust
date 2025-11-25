@@ -1,3 +1,4 @@
+use rustc_type_ir::ir_traits::*;
 use rustc_type_ir::{self as ty, Interner};
 use tracing::instrument;
 
@@ -12,16 +13,16 @@ where
     #[instrument(level = "trace", skip(self), ret)]
     pub(super) fn normalize_anon_const(
         &mut self,
-        goal: Goal<I, ty::NormalizesTo<I>>,
+        goal: &Goal<I, ty::NormalizesTo<I>>,
     ) -> QueryResult<I> {
         if let Some(normalized_const) = self.evaluate_const(
-            goal.param_env,
+            goal.param_env.r(),
             ty::UnevaluatedConst::new(
                 goal.predicate.alias.def_id.try_into().unwrap(),
-                goal.predicate.alias.args,
+                goal.predicate.alias.args.clone(),
             ),
         ) {
-            self.instantiate_normalizes_to_term(goal, normalized_const.into());
+            self.instantiate_normalizes_to_term(goal, normalized_const.r().into());
             self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
         } else {
             self.evaluate_added_goals_and_make_canonical_response(Certainty::AMBIGUOUS)

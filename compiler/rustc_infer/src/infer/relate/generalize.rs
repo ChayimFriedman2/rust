@@ -10,6 +10,7 @@ use rustc_middle::ty::{
     TypeVisitableExt, TypeVisitor, TypingMode,
 };
 use rustc_span::Span;
+use rustc_type_ir::relate::RelateRef;
 use tracing::{debug, instrument, warn};
 
 use super::{
@@ -252,14 +253,14 @@ impl<'tcx> InferCtxt<'tcx> {
 
     /// Attempts to generalize `source_term` for the type variable `target_vid`.
     /// This checks for cycles -- that is, whether `source_term` references `target_vid`.
-    fn generalize<T: Into<Term<'tcx>> + Relate<TyCtxt<'tcx>>>(
+    fn generalize<T: Into<Term<'tcx>> + Copy + Relate<TyCtxt<'tcx>>>(
         &self,
         span: Span,
         structurally_relate_aliases: StructurallyRelateAliases,
         target_vid: impl Into<TermVid>,
         ambient_variance: ty::Variance,
         source_term: T,
-    ) -> RelateResult<'tcx, Generalization<T>> {
+    ) -> RelateResult<'tcx, Generalization<T::RelateResult>> {
         assert!(!source_term.has_escaping_bound_vars());
         let (for_universe, root_vid) = match target_vid.into() {
             TermVid::Ty(ty_vid) => {
@@ -493,7 +494,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
         _info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         debug!(?self.ambient_variance, "new ambient variance");
@@ -750,13 +751,13 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
     #[instrument(level = "debug", skip(self), ret)]
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        _: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        _: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
-        let result = self.relate(a.skip_binder(), a.skip_binder())?;
+        let result = self.relate(a.skip_binder_ref(), a.skip_binder_ref())?;
         Ok(a.rebind(result))
     }
 }

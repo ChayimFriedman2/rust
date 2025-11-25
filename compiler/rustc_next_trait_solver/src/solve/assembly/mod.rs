@@ -2,18 +2,20 @@
 
 pub(super) mod structural_traits;
 
+use std::borrow::Borrow;
 use std::cell::Cell;
 use std::ops::ControlFlow;
 
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;
+use rustc_type_ir::ir_traits::*;
 use rustc_type_ir::lang_items::SolverTraitLangItem;
 use rustc_type_ir::search_graph::CandidateHeadUsages;
 use rustc_type_ir::solve::{AliasBoundKind, SizedTraitKind};
 use rustc_type_ir::{
     self as ty, Interner, TypeFlags, TypeFoldable, TypeFolder, TypeSuperFoldable,
     TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingMode, Upcast,
-    elaborate,
+    UpcastFrom, elaborate,
 };
 use tracing::{debug, instrument};
 
@@ -40,29 +42,32 @@ pub(super) struct Candidate<I: Interner> {
 
 /// Methods used to assemble candidates for either trait or projection goals.
 pub(super) trait GoalKind<D, I = <D as SolverDelegate>::Interner>:
-    TypeFoldable<I> + Copy + Eq + std::fmt::Display
+    TypeFoldable<I> + Eq + std::fmt::Display
 where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    fn self_ty(self) -> I::Ty;
+    fn self_ty(&self) -> I::TyRef<'_>;
 
-    fn trait_ref(self, cx: I) -> ty::TraitRef<I>;
+    fn trait_ref(&self, cx: I) -> impl Borrow<ty::TraitRef<I>>;
 
-    fn with_replaced_self_ty(self, cx: I, self_ty: I::Ty) -> Self;
+    fn with_replaced_self_ty(&self, cx: I, self_ty: I::Ty) -> Self;
 
-    fn trait_def_id(self, cx: I) -> I::TraitId;
+    fn trait_def_id(&self, cx: I) -> I::TraitId;
 
     /// Consider a clause, which consists of a "assumption" and some "requirements",
     /// to satisfy a goal. If the requirements hold, then attempt to satisfy our
     /// goal by equating it with the assumption.
-    fn probe_and_consider_implied_clause(
+    fn probe_and_consider_implied_clause<'a>(
         ecx: &mut EvalCtxt<'_, D>,
         parent_source: CandidateSource<I>,
-        goal: Goal<I, Self>,
-        assumption: I::Clause,
+        goal: &Goal<I, Self>,
+        assumption: I::ClauseRef<'a>,
         requirements: impl IntoIterator<Item = (GoalSource, Goal<I, I::Predicate>)>,
-    ) -> Result<Candidate<I>, NoSolution> {
+    ) -> Result<Candidate<I>, NoSolution>
+    where
+        I: 'a,
+    {
         Self::probe_and_match_goal_against_assumption(ecx, parent_source, goal, assumption, |ecx| {
             for (nested_source, goal) in requirements {
                 ecx.add_goal(nested_source, goal);
@@ -74,12 +79,15 @@ where
     /// Consider a clause specifically for a `dyn Trait` self type. This requires
     /// additionally checking all of the supertraits and object bounds to hold,
     /// since they're not implied by the well-formedness of the object type.
-    fn probe_and_consider_object_bound_candidate(
+    fn probe_and_consider_object_bound_candidate<'a>(
         ecx: &mut EvalCtxt<'_, D>,
         source: CandidateSource<I>,
-        goal: Goal<I, Self>,
-        assumption: I::Clause,
-    ) -> Result<Candidate<I>, NoSolution> {
+        goal: &Goal<I, Self>,
+        assumption: I::ClauseRef<'a>,
+    ) -> Result<Candidate<I>, NoSolution>
+    where
+        I: 'a,
+    {
         Self::probe_and_match_goal_against_assumption(ecx, source, goal, assumption, |ecx| {
             let cx = ecx.cx();
             let ty::Dynamic(bounds, _) = goal.predicate.self_ty().kind() else {
@@ -87,9 +95,9 @@ where
             };
             match structural_traits::predicates_for_object_candidate(
                 ecx,
-                goal.param_env,
-                goal.predicate.trait_ref(cx),
-                bounds,
+                goal.param_env.r(),
+                goal.predicate.trait_ref(cx).borrow(),
+                bounds.r(),
             ) {
                 Ok(requirements) => {
                     ecx.add_goals(GoalSource::ImplWhereBound, requirements);
@@ -107,15 +115,18 @@ where
     /// `explicit_implied_const_bounds` for an associated type.
     fn consider_additional_alias_assumptions(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
-        alias_ty: ty::AliasTy<I>,
+        goal: &Goal<I, Self>,
+        alias_ty: &ty::AliasTy<I>,
     ) -> Vec<Candidate<I>>;
 
-    fn probe_and_consider_param_env_candidate(
+    fn probe_and_consider_param_env_candidate<'a>(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
-        assumption: I::Clause,
-    ) -> Result<Candidate<I>, CandidateHeadUsages> {
+        goal: &Goal<I, Self>,
+        assumption: I::ClauseRef<'a>,
+    ) -> Result<Candidate<I>, CandidateHeadUsages>
+    where
+        I: 'a,
+    {
         match Self::fast_reject_assumption(ecx, goal, assumption) {
             Ok(()) => {}
             Err(NoSolution) => return Err(CandidateHeadUsages::default()),
@@ -131,12 +142,14 @@ where
         let (result, head_usages) = ecx
             .probe(|result: &QueryResult<I>| inspect::ProbeKind::TraitCandidate {
                 source: source.get(),
-                result: *result,
+                result: result.clone(),
             })
             .enter_single_candidate(|ecx| {
                 Self::match_assumption(ecx, goal, assumption, |ecx| {
                     ecx.try_evaluate_added_goals()?;
-                    source.set(ecx.characterize_param_env_assumption(goal.param_env, assumption)?);
+                    source.set(
+                        ecx.characterize_param_env_assumption(goal.param_env.r(), assumption)?,
+                    );
                     ecx.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
                 })
             });
@@ -151,13 +164,16 @@ where
     /// holds, then execute the `then` callback, which should do any additional
     /// work, then produce a response (typically by executing
     /// [`EvalCtxt::evaluate_added_goals_and_make_canonical_response`]).
-    fn probe_and_match_goal_against_assumption(
+    fn probe_and_match_goal_against_assumption<'a>(
         ecx: &mut EvalCtxt<'_, D>,
         source: CandidateSource<I>,
-        goal: Goal<I, Self>,
-        assumption: I::Clause,
+        goal: &Goal<I, Self>,
+        assumption: I::ClauseRef<'a>,
         then: impl FnOnce(&mut EvalCtxt<'_, D>) -> QueryResult<I>,
-    ) -> Result<Candidate<I>, NoSolution> {
+    ) -> Result<Candidate<I>, NoSolution>
+    where
+        I: 'a,
+    {
         Self::fast_reject_assumption(ecx, goal, assumption)?;
 
         ecx.probe_trait_candidate(source)
@@ -166,23 +182,27 @@ where
 
     /// Try to reject the assumption based off of simple heuristics, such as [`ty::ClauseKind`]
     /// and `DefId`.
-    fn fast_reject_assumption(
+    fn fast_reject_assumption<'a>(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
-        assumption: I::Clause,
-    ) -> Result<(), NoSolution>;
+        goal: &Goal<I, Self>,
+        assumption: I::ClauseRef<'a>,
+    ) -> Result<(), NoSolution>
+    where
+        I: 'a;
 
     /// Relate the goal and assumption.
-    fn match_assumption(
+    fn match_assumption<'a>(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
-        assumption: I::Clause,
+        goal: &Goal<I, Self>,
+        assumption: I::ClauseRef<'a>,
         then: impl FnOnce(&mut EvalCtxt<'_, D>) -> QueryResult<I>,
-    ) -> QueryResult<I>;
+    ) -> QueryResult<I>
+    where
+        I: 'a;
 
     fn consider_impl_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
         impl_def_id: I::ImplId,
         then: impl FnOnce(&mut EvalCtxt<'_, D>, Certainty) -> QueryResult<I>,
     ) -> Result<Candidate<I>, NoSolution>;
@@ -204,13 +224,13 @@ where
     /// [`structural_traits::instantiate_constituent_tys_for_auto_trait`].
     fn consider_auto_trait_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A trait alias holds if the RHS traits and `where` clauses hold.
     fn consider_trait_alias_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A type is `Sized` if its tail component is `Sized` and a type is `MetaSized` if its tail
@@ -220,7 +240,7 @@ where
     /// [`structural_traits::instantiate_constituent_tys_for_sizedness_trait`].
     fn consider_builtin_sizedness_candidates(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
         sizedness: SizedTraitKind,
     ) -> Result<Candidate<I>, NoSolution>;
 
@@ -230,20 +250,20 @@ where
     /// [`structural_traits::instantiate_constituent_tys_for_copy_clone_trait`].
     fn consider_builtin_copy_clone_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A type is a `FnPtr` if it is of `FnPtr` type.
     fn consider_builtin_fn_ptr_trait_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A callable type (a closure, fn def, or fn ptr) is known to implement the `Fn<A>`
     /// family of traits where `A` is given by the signature of the type.
     fn consider_builtin_fn_trait_candidates(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
         kind: ty::ClosureKind,
     ) -> Result<Candidate<I>, NoSolution>;
 
@@ -251,7 +271,7 @@ where
     /// where `A` is given by the signature of the type.
     fn consider_builtin_async_fn_trait_candidates(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
         kind: ty::ClosureKind,
     ) -> Result<Candidate<I>, NoSolution>;
 
@@ -260,13 +280,13 @@ where
     /// upvar analysis is performed in HIR typeck.
     fn consider_builtin_async_fn_kind_helper_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// `Tuple` is implemented if the `Self` type is a tuple.
     fn consider_builtin_tuple_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// `Pointee` is always implemented.
@@ -276,7 +296,7 @@ where
     /// tail.
     fn consider_builtin_pointee_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A coroutine (that comes from an `async` desugaring) is known to implement
@@ -284,7 +304,7 @@ where
     /// that was computed during type-checking.
     fn consider_builtin_future_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A coroutine (that comes from a `gen` desugaring) is known to implement
@@ -292,19 +312,19 @@ where
     /// that was computed during type-checking.
     fn consider_builtin_iterator_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A coroutine (that comes from a `gen` desugaring) is known to implement
     /// `FusedIterator`
     fn consider_builtin_fused_iterator_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     fn consider_builtin_async_iterator_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// A coroutine (that doesn't come from an `async` or `gen` desugaring) is known to
@@ -312,27 +332,27 @@ where
     /// and return types of the coroutine computed during type-checking.
     fn consider_builtin_coroutine_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     fn consider_builtin_discriminant_kind_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     fn consider_builtin_destruct_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     fn consider_builtin_transmute_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     fn consider_builtin_bikeshed_guaranteed_no_drop_candidate(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Result<Candidate<I>, NoSolution>;
 
     /// Consider (possibly several) candidates to upcast or unsize a type to another
@@ -344,7 +364,7 @@ where
     /// easiest way to maintain the existing behavior for now.
     fn consider_structural_builtin_unsize_candidates(
         ecx: &mut EvalCtxt<'_, D>,
-        goal: Goal<I, Self>,
+        goal: &Goal<I, Self>,
     ) -> Vec<Candidate<I>>;
 }
 
@@ -392,24 +412,26 @@ where
 {
     pub(super) fn assemble_and_evaluate_candidates<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         assemble_from: AssembleCandidatesFrom,
     ) -> (Vec<Candidate<I>>, FailedCandidateInfo) {
         let mut candidates = vec![];
         let mut failed_candidate_info =
             FailedCandidateInfo { param_env_head_usages: CandidateHeadUsages::default() };
         let Ok(normalized_self_ty) =
-            self.structurally_normalize_ty(goal.param_env, goal.predicate.self_ty())
+            self.structurally_normalize_ty(goal.param_env.r(), goal.predicate.self_ty().o())
         else {
             return (candidates, failed_candidate_info);
         };
 
-        let goal: Goal<I, G> = goal
-            .with(self.cx(), goal.predicate.with_replaced_self_ty(self.cx(), normalized_self_ty));
+        let goal: Goal<I, G> = goal.with(
+            self.cx(),
+            goal.predicate.with_replaced_self_ty(self.cx(), normalized_self_ty.clone()),
+        );
 
         if normalized_self_ty.is_ty_var() {
             debug!("self type has been normalized to infer");
-            self.try_assemble_bounds_via_registered_opaques(goal, assemble_from, &mut candidates);
+            self.try_assemble_bounds_via_registered_opaques(&goal, assemble_from, &mut candidates);
             return (candidates, failed_candidate_info);
         }
 
@@ -418,18 +440,18 @@ where
         let goal = self.resolve_vars_if_possible(goal);
 
         if let TypingMode::Coherence = self.typing_mode()
-            && let Ok(candidate) = self.consider_coherence_unknowable_candidate(goal)
+            && let Ok(candidate) = self.consider_coherence_unknowable_candidate(&goal)
         {
             candidates.push(candidate);
             return (candidates, failed_candidate_info);
         }
 
-        self.assemble_alias_bound_candidates(goal, &mut candidates);
-        self.assemble_param_env_candidates(goal, &mut candidates, &mut failed_candidate_info);
+        self.assemble_alias_bound_candidates(&goal, &mut candidates);
+        self.assemble_param_env_candidates(&goal, &mut candidates, &mut failed_candidate_info);
 
         match assemble_from {
             AssembleCandidatesFrom::All => {
-                self.assemble_builtin_impl_candidates(goal, &mut candidates);
+                self.assemble_builtin_impl_candidates(&goal, &mut candidates);
                 // For performance we only assemble impls if there are no candidates
                 // which would shadow them. This is necessary to avoid hangs in rayon,
                 // see trait-system-refactor-initiative#109 for more details.
@@ -441,17 +463,17 @@ where
                 // as we may want to weaken inference guidance in the future and don't want
                 // to worry about causing major performance regressions when doing so.
                 // See trait-system-refactor-initiative#226 for some ideas here.
-                if TypingMode::Coherence == self.typing_mode()
+                if TypingMode::Coherence == *self.typing_mode()
                     || !candidates.iter().any(|c| {
                         matches!(
                             c.source,
                             CandidateSource::ParamEnv(ParamEnvSource::NonGlobal)
                                 | CandidateSource::AliasBound(_)
-                        ) && has_no_inference_or_external_constraints(c.result)
+                        ) && has_no_inference_or_external_constraints(&c.result)
                     })
                 {
-                    self.assemble_impl_candidates(goal, &mut candidates);
-                    self.assemble_object_bound_candidates(goal, &mut candidates);
+                    self.assemble_impl_candidates(&goal, &mut candidates);
+                    self.assemble_object_bound_candidates(&goal, &mut candidates);
                 }
             }
             AssembleCandidatesFrom::EnvAndBounds => {
@@ -461,7 +483,7 @@ where
                 if matches!(normalized_self_ty.kind(), ty::Dynamic(..))
                     && !candidates.iter().any(|c| matches!(c.source, CandidateSource::ParamEnv(_)))
                 {
-                    self.assemble_object_bound_candidates(goal, &mut candidates);
+                    self.assemble_object_bound_candidates(&goal, &mut candidates);
                 }
             }
         }
@@ -490,7 +512,7 @@ where
     #[instrument(level = "trace", skip_all)]
     fn assemble_impl_candidates<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         candidates: &mut Vec<Candidate<I>>,
     ) {
         let cx = self.cx();
@@ -517,7 +539,7 @@ where
     #[instrument(level = "trace", skip_all)]
     fn assemble_builtin_impl_candidates<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         candidates: &mut Vec<Candidate<I>>,
     ) {
         let cx = self.cx();
@@ -629,11 +651,11 @@ where
     #[instrument(level = "trace", skip_all)]
     fn assemble_param_env_candidates<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         candidates: &mut Vec<Candidate<I>>,
         failed_candidate_info: &mut FailedCandidateInfo,
     ) {
-        for assumption in goal.param_env.caller_bounds().iter() {
+        for assumption in goal.param_env.r().caller_bounds().iter() {
             match G::probe_and_consider_param_env_candidate(self, goal, assumption) {
                 Ok(candidate) => candidates.push(candidate),
                 Err(head_usages) => {
@@ -646,7 +668,7 @@ where
     #[instrument(level = "trace", skip_all)]
     fn assemble_alias_bound_candidates<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         candidates: &mut Vec<Candidate<I>>,
     ) {
         let () = self.probe(|_| ProbeKind::NormalizedSelfTyAssembly).enter(|ecx| {
@@ -670,8 +692,8 @@ where
     // hitting another overflow error something. Add a depth parameter needed later.
     fn assemble_alias_bound_candidates_recur<G: GoalKind<D>>(
         &mut self,
-        self_ty: I::Ty,
-        goal: Goal<I, G>,
+        self_ty: I::TyRef<'_>,
+        goal: &Goal<I, G>,
         candidates: &mut Vec<Candidate<I>>,
         consider_self_bounds: AliasBoundKind,
     ) {
@@ -723,7 +745,7 @@ where
                 return;
             }
 
-            ty::Alias(kind @ (ty::Projection | ty::Opaque), alias_ty) => (kind, alias_ty),
+            ty::Alias(kind @ (ty::Projection | ty::Opaque), alias_ty) => (*kind, alias_ty),
             ty::Alias(ty::Inherent | ty::Free, _) => {
                 self.cx().delay_bug(format!("could not normalize {self_ty:?}, it is not WF"));
                 return;
@@ -735,13 +757,13 @@ where
                 for assumption in self
                     .cx()
                     .item_self_bounds(alias_ty.def_id)
-                    .iter_instantiated(self.cx(), alias_ty.args)
+                    .iter_instantiated(self.cx(), alias_ty.args.r())
                 {
                     candidates.extend(G::probe_and_consider_implied_clause(
                         self,
                         CandidateSource::AliasBound(consider_self_bounds),
                         goal,
-                        assumption,
+                        assumption.r(),
                         [],
                     ));
                 }
@@ -750,13 +772,13 @@ where
                 for assumption in self
                     .cx()
                     .item_non_self_bounds(alias_ty.def_id)
-                    .iter_instantiated(self.cx(), alias_ty.args)
+                    .iter_instantiated(self.cx(), alias_ty.args.r())
                 {
                     candidates.extend(G::probe_and_consider_implied_clause(
                         self,
                         CandidateSource::AliasBound(consider_self_bounds),
                         goal,
-                        assumption,
+                        assumption.r(),
                         [],
                     ));
                 }
@@ -770,9 +792,9 @@ where
         }
 
         // Recurse on the self type of the projection.
-        match self.structurally_normalize_ty(goal.param_env, alias_ty.self_ty()) {
+        match self.structurally_normalize_ty(goal.param_env.r(), alias_ty.self_ty().o()) {
             Ok(next_self_ty) => self.assemble_alias_bound_candidates_recur(
-                next_self_ty,
+                next_self_ty.r(),
                 goal,
                 candidates,
                 AliasBoundKind::NonSelfBounds,
@@ -784,7 +806,7 @@ where
     #[instrument(level = "trace", skip_all)]
     fn assemble_object_bound_candidates<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         candidates: &mut Vec<Candidate<I>>,
     ) {
         let cx = self.cx();
@@ -823,7 +845,7 @@ where
             | ty::Error(_) => return,
             ty::Infer(ty::TyVar(_) | ty::FreshTy(_) | ty::FreshIntTy(_) | ty::FreshFloatTy(_))
             | ty::Bound(..) => panic!("unexpected self type for `{goal:?}`"),
-            ty::Dynamic(bounds, ..) => bounds,
+            ty::Dynamic(bounds, ..) => bounds.r(),
         };
 
         // Do not consider built-in object impls for dyn-incompatible types.
@@ -834,8 +856,8 @@ where
         // Consider all of the auto-trait and projection bounds, which don't
         // need to be recorded as a `BuiltinImplSource::Object` since they don't
         // really have a vtable base...
-        for bound in bounds.iter() {
-            match bound.skip_binder() {
+        for bound in bounds.iter_ref() {
+            match bound.skip_binder_ref() {
                 ty::ExistentialPredicate::Trait(_) => {
                     // Skip principal
                 }
@@ -845,7 +867,7 @@ where
                         self,
                         CandidateSource::BuiltinImpl(BuiltinImplSource::Misc),
                         goal,
-                        bound.with_self_ty(cx, self_ty),
+                        bound.with_self_ty(cx, self_ty.o()).r(),
                     ));
                 }
             }
@@ -855,13 +877,13 @@ where
         // since we don't need to look at any supertrait or anything if we are doing
         // a projection goal.
         if let Some(principal) = bounds.principal() {
-            let principal_trait_ref = principal.with_self_ty(cx, self_ty);
+            let principal_trait_ref = principal.with_self_ty(cx, self_ty.o());
             for (idx, assumption) in elaborate::supertraits(cx, principal_trait_ref).enumerate() {
                 candidates.extend(G::probe_and_consider_object_bound_candidate(
                     self,
                     CandidateSource::BuiltinImpl(BuiltinImplSource::Object(idx)),
                     goal,
-                    assumption.upcast(cx),
+                    I::Clause::upcast_from(assumption, cx).r(),
                 ));
             }
         }
@@ -876,12 +898,12 @@ where
     #[instrument(level = "trace", skip_all)]
     fn consider_coherence_unknowable_candidate<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
     ) -> Result<Candidate<I>, NoSolution> {
         self.probe_trait_candidate(CandidateSource::CoherenceUnknowable).enter(|ecx| {
             let cx = ecx.cx();
             let trait_ref = goal.predicate.trait_ref(cx);
-            if ecx.trait_ref_is_knowable(goal.param_env, trait_ref)? {
+            if ecx.trait_ref_is_knowable(goal.param_env.r(), trait_ref.borrow())? {
                 Err(NoSolution)
             } else {
                 // While the trait bound itself may be unknowable, we may be able to
@@ -889,7 +911,7 @@ where
                 // prove the super trait bounds of the current goal.
                 //
                 // We skip the goal itself as that one would cycle.
-                let predicate: I::Predicate = trait_ref.upcast(cx);
+                let predicate: I::Predicate = trait_ref.borrow().clone().upcast(cx);
                 ecx.add_goals(
                     GoalSource::Misc,
                     elaborate::elaborate(cx, [predicate])
@@ -951,7 +973,7 @@ where
                 // assumes that specializing impls have to be always applicable, meaning that
                 // the only allowed region constraints may be constraints also present on the default impl.
                 if matches!(allow_inference_constraints, AllowInferenceConstraints::Yes)
-                    || has_only_region_constraints(c.result)
+                    || has_only_region_constraints(&c.result)
                 {
                     if self.cx().impl_specializes(other_def_id, victim_def_id) {
                         candidates.remove(i);
@@ -977,7 +999,7 @@ where
     /// for why this is necessary.
     fn try_assemble_bounds_via_registered_opaques<G: GoalKind<D>>(
         &mut self,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         assemble_from: AssembleCandidatesFrom,
         candidates: &mut Vec<Candidate<I>>,
     ) {
@@ -996,22 +1018,22 @@ where
             return;
         }
 
-        for &alias_ty in &opaque_types {
+        for alias_ty in opaque_types {
             debug!("self ty is sub unified with {alias_ty:?}");
 
-            struct ReplaceOpaque<I: Interner> {
+            struct ReplaceOpaque<'a, I: Interner> {
                 cx: I,
-                alias_ty: ty::AliasTy<I>,
-                self_ty: I::Ty,
+                alias_ty: &'a ty::AliasTy<I>,
+                self_ty: I::TyRef<'a>,
             }
-            impl<I: Interner> TypeFolder<I> for ReplaceOpaque<I> {
+            impl<I: Interner> TypeFolder<I> for ReplaceOpaque<'_, I> {
                 fn cx(&self) -> I {
                     self.cx
                 }
                 fn fold_ty(&mut self, ty: I::Ty) -> I::Ty {
                     if let ty::Alias(ty::Opaque, alias_ty) = ty.kind() {
                         if alias_ty == self.alias_ty {
-                            return self.self_ty;
+                            return self.self_ty.o();
                         }
                     }
                     ty.super_fold_with(self)
@@ -1028,15 +1050,18 @@ where
             for item_bound in self
                 .cx()
                 .item_self_bounds(alias_ty.def_id)
-                .iter_instantiated(self.cx(), alias_ty.args)
+                .iter_instantiated(self.cx(), alias_ty.args.r())
             {
-                let assumption =
-                    item_bound.fold_with(&mut ReplaceOpaque { cx: self.cx(), alias_ty, self_ty });
+                let assumption = item_bound.fold_with(&mut ReplaceOpaque {
+                    cx: self.cx(),
+                    alias_ty: &alias_ty,
+                    self_ty: self_ty.reborrow(),
+                });
                 candidates.extend(G::probe_and_match_goal_against_assumption(
                     self,
                     CandidateSource::AliasBound(AliasBoundKind::SelfBounds),
                     goal,
-                    assumption,
+                    assumption.r(),
                     |ecx| {
                         // We want to reprove this goal once we've inferred the
                         // hidden type, so we force the certainty to `Maybe`.
@@ -1061,7 +1086,7 @@ where
                 }
 
                 match G::consider_impl_candidate(self, goal, impl_def_id, |ecx, certainty| {
-                    if ecx.shallow_resolve(self_ty).is_ty_var() {
+                    if ecx.shallow_resolve(self_ty.o()).is_ty_var() {
                         // We force the certainty of impl candidates to be `Maybe`.
                         let certainty = certainty.and(Certainty::AMBIGUOUS);
                         ecx.evaluate_added_goals_and_make_canonical_response(certainty)
@@ -1127,7 +1152,7 @@ where
     pub(super) fn assemble_and_merge_candidates<G: GoalKind<D>>(
         &mut self,
         proven_via: Option<TraitGoalProvenVia>,
-        goal: Goal<I, G>,
+        goal: &Goal<I, G>,
         inject_normalize_to_rigid_candidate: impl FnOnce(&mut EvalCtxt<'_, D>) -> QueryResult<I>,
     ) -> QueryResult<I> {
         let Some(proven_via) = proven_via else {
@@ -1159,7 +1184,7 @@ where
                 }
 
                 if let Some((response, _)) = self.try_merge_candidates(&candidates) {
-                    Ok(response)
+                    Ok(response.clone())
                 } else {
                     self.flounder(&candidates)
                 }
@@ -1181,7 +1206,7 @@ where
                 // constraining the normalized-to `term`.
                 self.filter_specialized_impls(AllowInferenceConstraints::Yes, &mut candidates);
                 if let Some((response, _)) = self.try_merge_candidates(&candidates) {
-                    Ok(response)
+                    Ok(response.clone())
                 } else {
                     self.flounder(&candidates)
                 }
@@ -1204,8 +1229,8 @@ where
     /// behavior lazily.
     fn characterize_param_env_assumption(
         &mut self,
-        param_env: I::ParamEnv,
-        assumption: I::Clause,
+        param_env: I::ParamEnvRef<'_>,
+        assumption: I::ClauseRef<'_>,
     ) -> Result<CandidateSource<I>, NoSolution> {
         // FIXME: This should be fixed, but it also requires changing the behavior
         // in the old solver which is currently relied on.
@@ -1215,7 +1240,7 @@ where
 
         match assumption.visit_with(&mut FindParamInClause {
             ecx: self,
-            param_env,
+            param_env: param_env.reborrow(),
             universes: vec![],
         }) {
             ControlFlow::Break(Err(NoSolution)) => Err(NoSolution),
@@ -1227,7 +1252,7 @@ where
 
 struct FindParamInClause<'a, 'b, D: SolverDelegate<Interner = I>, I: Interner> {
     ecx: &'a mut EvalCtxt<'b, D>,
-    param_env: I::ParamEnv,
+    param_env: I::ParamEnvRef<'a>,
     universes: Vec<Option<ty::UniverseIndex>>,
 }
 
@@ -1245,8 +1270,8 @@ where
         ControlFlow::Continue(())
     }
 
-    fn visit_ty(&mut self, ty: I::Ty) -> Self::Result {
-        let ty = self.ecx.replace_bound_vars(ty, &mut self.universes);
+    fn visit_ty(&mut self, ty: I::TyRef<'_>) -> Self::Result {
+        let ty = self.ecx.replace_bound_vars(ty.o(), &mut self.universes);
         let Ok(ty) = self.ecx.structurally_normalize_ty(self.param_env, ty) else {
             return ControlFlow::Break(Err(NoSolution));
         };
@@ -1264,8 +1289,8 @@ where
         }
     }
 
-    fn visit_const(&mut self, ct: I::Const) -> Self::Result {
-        let ct = self.ecx.replace_bound_vars(ct, &mut self.universes);
+    fn visit_const(&mut self, ct: I::ConstRef<'_>) -> Self::Result {
+        let ct = self.ecx.replace_bound_vars(ct.o(), &mut self.universes);
         let Ok(ct) = self.ecx.structurally_normalize_const(self.param_env, ct) else {
             return ControlFlow::Break(Err(NoSolution));
         };
@@ -1283,8 +1308,8 @@ where
         }
     }
 
-    fn visit_region(&mut self, r: I::Region) -> Self::Result {
-        match self.ecx.eager_resolve_region(r).kind() {
+    fn visit_region(&mut self, r: I::RegionRef<'_>) -> Self::Result {
+        match self.ecx.eager_resolve_region(r.o()).kind() {
             ty::ReStatic | ty::ReError(_) | ty::ReBound(..) => ControlFlow::Continue(()),
             ty::RePlaceholder(p) => {
                 if p.universe() == ty::UniverseIndex::ROOT {

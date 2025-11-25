@@ -4,6 +4,7 @@ use smallvec::smallvec;
 
 use crate::data_structures::HashSet;
 use crate::inherent::*;
+use crate::ir_traits::*;
 use crate::lang_items::SolverTraitLangItem;
 use crate::outlives::{Component, push_outlives_components};
 use crate::{self as ty, Interner, Upcast as _};
@@ -35,7 +36,7 @@ enum ElaborateSized {
 
 /// Describes how to elaborate an obligation into a sub-obligation.
 pub trait Elaboratable<I: Interner> {
-    fn predicate(&self) -> I::Predicate;
+    fn predicate(&self) -> I::PredicateRef<'_>;
 
     // Makes a new `Self` but with a different clause that comes from elaboration.
     fn child(&self, clause: I::Clause) -> Self;
@@ -46,7 +47,7 @@ pub trait Elaboratable<I: Interner> {
         &self,
         clause: I::Clause,
         span: I::Span,
-        parent_trait_pred: ty::Binder<I, ty::TraitPredicate<I>>,
+        parent_trait_pred: ty::Binder<I, &ty::TraitPredicate<I>>,
         index: usize,
     ) -> Self;
 }
@@ -62,8 +63,8 @@ impl<I: Interner> ClauseWithSupertraitSpan<I> {
     }
 }
 impl<I: Interner> Elaboratable<I> for ClauseWithSupertraitSpan<I> {
-    fn predicate(&self) -> <I as Interner>::Predicate {
-        self.clause.as_predicate()
+    fn predicate(&self) -> I::PredicateRef<'_> {
+        self.clause.r().as_predicate()
     }
 
     fn child(&self, clause: <I as Interner>::Clause) -> Self {
@@ -74,7 +75,7 @@ impl<I: Interner> Elaboratable<I> for ClauseWithSupertraitSpan<I> {
         &self,
         clause: <I as Interner>::Clause,
         supertrait_span: <I as Interner>::Span,
-        _parent_trait_pred: crate::Binder<I, crate::TraitPredicate<I>>,
+        _parent_trait_pred: crate::Binder<I, &crate::TraitPredicate<I>>,
         _index: usize,
     ) -> Self {
         ClauseWithSupertraitSpan { clause, supertrait_span }
@@ -103,11 +104,9 @@ impl<I: Interner, O: Elaboratable<I>> Elaborator<I, O> {
         // This is necessary to prevent infinite recursion in some
         // cases. One common case is when people define
         // `trait Sized: Sized { }` rather than `trait Sized { }`.
-        self.stack.extend(
-            obligations.into_iter().filter(|o| {
-                self.visited.insert(self.cx.anonymize_bound_vars(o.predicate().kind()))
-            }),
-        );
+        self.stack.extend(obligations.into_iter().filter(|o| {
+            self.visited.insert(self.cx.anonymize_bound_vars(o.predicate().kind().clone()))
+        }));
     }
 
     /// Filter to only the supertraits of trait predicates, i.e. only the predicates
@@ -146,7 +145,7 @@ impl<I: Interner, O: Elaboratable<I>> Elaborator<I, O> {
         }
 
         let bound_clause = clause.kind();
-        match bound_clause.skip_binder() {
+        match bound_clause.skip_binder_ref() {
             ty::ClauseKind::Trait(data) => {
                 // Negative trait bounds do not imply any supertrait bounds
                 if data.polarity != ty::PredicatePolarity::Positive {
@@ -156,7 +155,9 @@ impl<I: Interner, O: Elaboratable<I>> Elaborator<I, O> {
                 let map_to_child_clause =
                     |(index, (clause, span)): (usize, (I::Clause, I::Span))| {
                         elaboratable.child_with_derived_cause(
-                            clause.instantiate_supertrait(cx, bound_clause.rebind(data.trait_ref)),
+                            clause
+                                .r()
+                                .instantiate_supertrait(cx, bound_clause.rebind(&data.trait_ref)),
                             span,
                             bound_clause.rebind(data),
                             index,
@@ -186,7 +187,8 @@ impl<I: Interner, O: Elaboratable<I>> Elaborator<I, O> {
                         elaboratable.child(
                             trait_ref
                                 .to_host_effect_clause(cx, data.constness)
-                                .instantiate_supertrait(cx, bound_clause.rebind(data.trait_ref)),
+                                .r()
+                                .instantiate_supertrait(cx, bound_clause.rebind(&data.trait_ref)),
                         )
                     },
                 ),
@@ -211,11 +213,13 @@ impl<I: Interner, O: Elaboratable<I>> Elaborator<I, O> {
                 }
 
                 let mut components = smallvec![];
-                push_outlives_components(cx, ty_max, &mut components);
+                push_outlives_components(cx, ty_max.r(), &mut components);
                 self.extend_deduped(
                     components
                         .into_iter()
-                        .filter_map(|component| elaborate_component_to_clause(cx, component, r_min))
+                        .filter_map(|component| {
+                            elaborate_component_to_clause(cx, component, r_min.clone())
+                        })
                         .map(|clause| elaboratable.child(bound_clause.rebind(clause).upcast(cx))),
                 );
             }
@@ -325,7 +329,7 @@ pub fn supertrait_def_ids<I: Interner>(
         let trait_def_id = stack.pop()?;
 
         for (predicate, _) in cx.explicit_super_predicates_of(trait_def_id).iter_identity() {
-            if let ty::ClauseKind::Trait(data) = predicate.kind().skip_binder()
+            if let ty::ClauseKind::Trait(data) = predicate.r().kind().skip_binder()
                 && set.insert(data.def_id())
             {
                 stack.push(data.def_id());
@@ -361,8 +365,8 @@ impl<I: Interner, It: Iterator<Item = I::Clause>> Iterator for FilterToTraits<I,
 
     fn next(&mut self) -> Option<ty::Binder<I, ty::TraitRef<I>>> {
         while let Some(pred) = self.base_iterator.next() {
-            if let Some(data) = pred.as_trait_clause() {
-                return Some(data.map_bound(|t| t.trait_ref));
+            if let Some(data) = pred.r().as_trait_clause() {
+                return Some(data.map_bound(|t| t.trait_ref.clone()));
             }
         }
         None
@@ -381,8 +385,8 @@ pub fn elaborate_outlives_assumptions<I: Interner>(
     let mut collected = HashSet::default();
 
     for ty::OutlivesPredicate(arg1, r2) in assumptions {
-        collected.insert(ty::OutlivesPredicate(arg1, r2));
-        match arg1.kind() {
+        collected.insert(ty::OutlivesPredicate(arg1.clone(), r2.clone()));
+        match arg1.r().kind() {
             // Elaborate the components of an type, since we may have substituted a
             // generic coroutine with a more specific type.
             ty::GenericArgKind::Type(ty1) => {
@@ -392,22 +396,25 @@ pub fn elaborate_outlives_assumptions<I: Interner>(
                     match c {
                         Component::Region(r1) => {
                             if !r1.is_bound() {
-                                collected.insert(ty::OutlivesPredicate(r1.into(), r2));
+                                collected.insert(ty::OutlivesPredicate(r1.into(), r2.clone()));
                             }
                         }
 
                         Component::Param(p) => {
                             let ty = Ty::new_param(cx, p);
-                            collected.insert(ty::OutlivesPredicate(ty.into(), r2));
+                            collected.insert(ty::OutlivesPredicate(ty.into(), r2.clone()));
                         }
 
                         Component::Placeholder(p) => {
                             let ty = Ty::new_placeholder(cx, p);
-                            collected.insert(ty::OutlivesPredicate(ty.into(), r2));
+                            collected.insert(ty::OutlivesPredicate(ty.into(), r2.clone()));
                         }
 
                         Component::Alias(alias_ty) => {
-                            collected.insert(ty::OutlivesPredicate(alias_ty.to_ty(cx).into(), r2));
+                            collected.insert(ty::OutlivesPredicate(
+                                alias_ty.to_ty(cx).into(),
+                                r2.clone(),
+                            ));
                         }
 
                         Component::UnresolvedInferenceVariable(_) | Component::EscapingAlias(_) => {

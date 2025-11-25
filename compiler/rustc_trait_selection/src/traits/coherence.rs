@@ -799,7 +799,7 @@ impl<'a, 'tcx> ProofTreeVisitor<'tcx> for AmbiguityCausesVisitor<'a, 'tcx> {
         };
 
         infcx.probe(|_| {
-            let conflict = match trait_ref_is_knowable(infcx, trait_ref, lazily_normalize_ty) {
+            let conflict = match trait_ref_is_knowable(infcx, &trait_ref, lazily_normalize_ty) {
                 Err(()) => return,
                 Ok(Ok(())) => {
                     warn!("expected an unknowable trait ref: {trait_ref:?}");

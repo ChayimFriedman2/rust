@@ -399,10 +399,10 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
     fn fold_region(&mut self, r: I::Region) -> I::Region {
         match r.kind() {
             ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), br)
-                if debruijn >= self.current_index =>
+                if *debruijn >= self.current_index =>
             {
                 let debruijn = debruijn.shifted_in(self.amount);
-                Region::new_bound(self.cx, debruijn, br)
+                Region::new_bound(self.cx, debruijn, *br)
             }
             _ => r,
         }
@@ -411,10 +411,10 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
     fn fold_ty(&mut self, ty: I::Ty) -> I::Ty {
         match ty.kind() {
             ty::Bound(BoundVarIndexKind::Bound(debruijn), bound_ty)
-                if debruijn >= self.current_index =>
+                if *debruijn >= self.current_index =>
             {
                 let debruijn = debruijn.shifted_in(self.amount);
-                Ty::new_bound(self.cx, debruijn, bound_ty)
+                Ty::new_bound(self.cx, debruijn, *bound_ty)
             }
 
             _ if ty.has_vars_bound_at_or_above(self.current_index) => ty.super_fold_with(self),
@@ -425,10 +425,10 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
     fn fold_const(&mut self, ct: I::Const) -> I::Const {
         match ct.kind() {
             ty::ConstKind::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_ct)
-                if debruijn >= self.current_index =>
+                if *debruijn >= self.current_index =>
             {
                 let debruijn = debruijn.shifted_in(self.amount);
-                Const::new_bound(self.cx, debruijn, bound_ct)
+                Const::new_bound(self.cx, debruijn, *bound_ct)
             }
             _ => ct.super_fold_with(self),
         }
@@ -442,7 +442,7 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
 pub fn shift_region<I: Interner>(cx: I, region: I::Region, amount: u32) -> I::Region {
     match region.kind() {
         ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), br) if amount > 0 => {
-            Region::new_bound(cx, debruijn.shifted_in(amount), br)
+            Region::new_bound(cx, debruijn.shifted_in(amount), *br)
         }
         _ => region,
     }
@@ -522,7 +522,7 @@ where
     fn fold_region(&mut self, r: I::Region) -> I::Region {
         match r.kind() {
             ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), _)
-                if debruijn < self.current_index =>
+                if *debruijn < self.current_index =>
             {
                 debug!(?self.current_index, "skipped bound region");
                 r

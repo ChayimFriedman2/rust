@@ -127,7 +127,7 @@ impl<'cx, 'tcx> VerifyBoundCx<'cx, 'tcx> {
         let recursive_bound = {
             let mut components = smallvec![];
             let kind = alias_ty.kind(self.tcx);
-            compute_alias_components_recursive(self.tcx, kind, alias_ty, &mut components);
+            compute_alias_components_recursive(self.tcx, kind, &alias_ty, &mut components);
             self.bound_from_components(&components)
         };
 

@@ -114,7 +114,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     },
                 );
 
-                (Ty::new_closure(tcx, expr_def_id.to_def_id(), closure_args.args), None)
+                (Ty::new_closure(tcx, expr_def_id.to_def_id(), closure_args), None)
             }
             hir::ClosureKind::Coroutine(kind) => {
                 let yield_ty = match kind {
@@ -185,7 +185,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 );
 
                 (
-                    Ty::new_coroutine(tcx, expr_def_id.to_def_id(), coroutine_args.args),
+                    Ty::new_coroutine(tcx, expr_def_id.to_def_id(), coroutine_args),
                     Some(CoroutineTypes { resume_ty, yield_ty }),
                 )
             }
@@ -260,7 +260,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 // vars which will get constrained during upvar analysis.
                 let coroutine_output_ty = tcx.liberate_late_bound_regions(
                     expr_def_id.to_def_id(),
-                    closure_args.coroutine_closure_sig().map_bound(|sig| {
+                    closure_args.as_coroutine_closure().coroutine_closure_sig().map_bound(|sig| {
                         sig.to_coroutine(
                             tcx,
                             parent_args,
@@ -278,7 +278,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     liberated_sig.abi,
                 );
 
-                (Ty::new_coroutine_closure(tcx, expr_def_id.to_def_id(), closure_args.args), None)
+                (Ty::new_coroutine_closure(tcx, expr_def_id.to_def_id(), closure_args), None)
             }
         };
 

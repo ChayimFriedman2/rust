@@ -87,8 +87,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
                         resume_ty: next_ty_var(),
                         yield_ty: next_ty_var(),
                     },
-                )
-                .args,
+                ),
             );
 
             user_provided_sig = self.tcx().mk_fn_sig(

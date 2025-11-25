@@ -4,9 +4,11 @@ use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContex
 use rustc_type_ir_macros::{TypeFoldable_Generic, TypeVisitable_Generic};
 
 use crate::inherent::*;
-use crate::{self as ty, Interner};
+use crate::ir_traits::*;
+use crate::{self as ty, Interner, VariancesOf};
 
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Copy; I: Interner, I::GenericArgs: Copy)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
 #[cfg_attr(
     feature = "nightly",
@@ -20,9 +22,9 @@ pub struct OpaqueTypeKey<I: Interner> {
 impl<I: Interner> Eq for OpaqueTypeKey<I> {}
 
 impl<I: Interner> OpaqueTypeKey<I> {
-    pub fn iter_captured_args(self, cx: I) -> impl Iterator<Item = (usize, I::GenericArg)> {
+    pub fn iter_captured_args(&self, cx: I) -> impl Iterator<Item = (usize, I::GenericArgRef<'_>)> {
         let variances = cx.variances_of(self.def_id.into());
-        std::iter::zip(self.args.iter(), variances.iter()).enumerate().filter_map(
+        std::iter::zip(self.args.r().iter(), variances.into_iter()).enumerate().filter_map(
             |(i, (arg, v))| match (arg.kind(), v) {
                 (_, ty::Invariant) => Some((i, arg)),
                 (ty::GenericArgKind::Lifetime(_), ty::Bivariant) => None,
@@ -38,12 +40,13 @@ impl<I: Interner> OpaqueTypeKey<I> {
     ) -> Self {
         let Self { def_id, args } = self;
         let variances = cx.variances_of(def_id.into());
-        let args =
-            std::iter::zip(args.iter(), variances.iter()).map(|(arg, v)| match (arg.kind(), v) {
-                (ty::GenericArgKind::Lifetime(_), ty::Bivariant) => arg,
-                (ty::GenericArgKind::Lifetime(lt), _) => f(lt).into(),
-                _ => arg,
-            });
+        let args = std::iter::zip(args.r().iter(), variances.into_iter()).map(|(arg, v)| {
+            match (arg.kind(), v) {
+                (ty::GenericArgKind::Lifetime(_), ty::Bivariant) => arg.o(),
+                (ty::GenericArgKind::Lifetime(lt), _) => f(lt.o()).into(),
+                _ => arg.o(),
+            }
+        });
         let args = cx.mk_args_from_iter(args);
         Self { def_id, args }
     }

@@ -21,8 +21,8 @@ use crate::ty::{
     walk_visitable_list,
 };
 
-pub type GenericArgKind<'tcx> = rustc_type_ir::GenericArgKind<TyCtxt<'tcx>>;
-pub type TermKind<'tcx> = rustc_type_ir::TermKind<TyCtxt<'tcx>>;
+pub type GenericArgKind<'tcx> = rustc_type_ir::GenericArgKind<'tcx, TyCtxt<'tcx>>;
+pub type TermKind<'tcx> = rustc_type_ir::TermKind<'tcx, TyCtxt<'tcx>>;
 
 /// An entity in the Rust type system, which can be one of
 /// several kinds (types, lifetimes, and consts).
@@ -38,9 +38,16 @@ pub struct GenericArg<'tcx> {
     marker: PhantomData<(Ty<'tcx>, ty::Region<'tcx>, ty::Const<'tcx>)>,
 }
 
-impl<'tcx> rustc_type_ir::inherent::GenericArg<TyCtxt<'tcx>> for GenericArg<'tcx> {}
+impl<'a, 'tcx> rustc_type_ir::inherent::GenericArg<'a, TyCtxt<'tcx>> for GenericArg<'tcx> where
+    'tcx: 'a
+{
+}
 
-impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArgsRef<'tcx> {
+impl<'a, 'tcx> rustc_type_ir::inherent::GenericArgsRef<'a, TyCtxt<'tcx>>
+    for ty::GenericArgsRef<'tcx>
+where
+    'tcx: 'a,
+{
     fn rebase_onto(
         self,
         tcx: TyCtxt<'tcx>,
@@ -74,7 +81,7 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
         ty::GenericArgs::extend_with_error(tcx, def_id, original_args)
     }
 
-    fn split_closure_args(self) -> ty::ClosureArgsParts<TyCtxt<'tcx>> {
+    fn split_closure_args(self) -> ty::ClosureArgsParts<'a, TyCtxt<'tcx>> {
         match self[..] {
             [ref parent_args @ .., closure_kind_ty, closure_sig_as_fn_ptr_ty, tupled_upvars_ty] => {
                 ty::ClosureArgsParts {
@@ -88,7 +95,7 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
         }
     }
 
-    fn split_coroutine_closure_args(self) -> ty::CoroutineClosureArgsParts<TyCtxt<'tcx>> {
+    fn split_coroutine_closure_args(self) -> ty::CoroutineClosureArgsParts<'a, TyCtxt<'tcx>> {
         match self[..] {
             [
                 ref parent_args @ ..,
@@ -107,7 +114,7 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
         }
     }
 
-    fn split_coroutine_args(self) -> ty::CoroutineArgsParts<TyCtxt<'tcx>> {
+    fn split_coroutine_args(self) -> ty::CoroutineArgsParts<'a, TyCtxt<'tcx>> {
         match self[..] {
             [ref parent_args @ .., kind_ty, resume_ty, yield_ty, return_ty, tupled_upvars_ty] => {
                 ty::CoroutineArgsParts {
@@ -122,11 +129,27 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
             _ => bug!("coroutine args missing synthetics"),
         }
     }
+
+    fn as_closure(self) -> rustc_type_ir::ClosureArgs<'a, TyCtxt<'tcx>> {
+        rustc_type_ir::ClosureArgs { args: self }
+    }
+
+    fn as_coroutine_closure(self) -> rustc_type_ir::CoroutineClosureArgs<'a, TyCtxt<'tcx>> {
+        rustc_type_ir::CoroutineClosureArgs { args: self }
+    }
+
+    fn as_coroutine(self) -> rustc_type_ir::CoroutineArgs<'a, TyCtxt<'tcx>> {
+        rustc_type_ir::CoroutineArgs { args: self }
+    }
 }
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for GenericArg<'tcx> {
-    type Kind = GenericArgKind<'tcx>;
+impl<'a, 'tcx> rustc_type_ir::inherent::AsOwnedKindRef<'a> for GenericArg<'tcx>
+where
+    'tcx: 'a,
+{
+    type Kind = rustc_type_ir::GenericArgKind<'a, TyCtxt<'tcx>>;
 
+    #[inline]
     fn kind(self) -> Self::Kind {
         self.kind()
     }
@@ -218,7 +241,8 @@ impl<'tcx> From<ty::Term<'tcx>> for GenericArg<'tcx> {
 
 impl<'tcx> GenericArg<'tcx> {
     #[inline]
-    pub fn kind(self) -> GenericArgKind<'tcx> {
+    pub fn kind<'a>(self) -> rustc_type_ir::GenericArgKind<'a, TyCtxt<'tcx>> {
+        use rustc_type_ir::GenericArgKind;
         let ptr =
             unsafe { self.ptr.map_addr(|addr| NonZero::new_unchecked(addr.get() & !TAG_MASK)) };
         // SAFETY: use of `Interned::new_unchecked` here is ok because these
@@ -309,7 +333,7 @@ impl<'tcx> GenericArg<'tcx> {
     /// Foo<Bar<isize>> => { Foo<Bar<isize>>, Bar<isize>, isize }
     /// [isize] => { [isize], isize }
     /// ```
-    pub fn walk(self) -> TypeWalker<TyCtxt<'tcx>> {
+    pub fn walk<'a>(self) -> TypeWalker<'a, TyCtxt<'tcx>> {
         TypeWalker::new(self)
     }
 }
@@ -391,7 +415,7 @@ impl<'tcx> GenericArgs<'tcx> {
     /// Closure args have a particular structure controlled by the
     /// compiler that encodes information like the signature and closure kind;
     /// see `ty::ClosureArgs` struct for more comments.
-    pub fn as_closure(&'tcx self) -> ClosureArgs<TyCtxt<'tcx>> {
+    pub fn as_closure(&'tcx self) -> ClosureArgs<'tcx> {
         ClosureArgs { args: self }
     }
 
@@ -399,7 +423,7 @@ impl<'tcx> GenericArgs<'tcx> {
     /// Coroutine-closure args have a particular structure controlled by the
     /// compiler that encodes information like the signature and closure kind;
     /// see `ty::CoroutineClosureArgs` struct for more comments.
-    pub fn as_coroutine_closure(&'tcx self) -> CoroutineClosureArgs<TyCtxt<'tcx>> {
+    pub fn as_coroutine_closure(&'tcx self) -> CoroutineClosureArgs<'tcx> {
         CoroutineClosureArgs { args: self }
     }
 
@@ -407,7 +431,7 @@ impl<'tcx> GenericArgs<'tcx> {
     /// Coroutine args have a particular structure controlled by the
     /// compiler that encodes information like the signature and coroutine kind;
     /// see `ty::CoroutineArgs` struct for more comments.
-    pub fn as_coroutine(&'tcx self) -> CoroutineArgs<TyCtxt<'tcx>> {
+    pub fn as_coroutine(&'tcx self) -> CoroutineArgs<'tcx> {
         CoroutineArgs { args: self }
     }
 

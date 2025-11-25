@@ -46,6 +46,12 @@ pub struct Predicate<'tcx>(
 );
 
 impl<'tcx> rustc_type_ir::inherent::Predicate<TyCtxt<'tcx>> for Predicate<'tcx> {
+    fn as_clause(self) -> Option<Clause<'tcx>> {
+        self.as_clause()
+    }
+}
+
+impl<'a, 'tcx> rustc_type_ir::inherent::PredicateRef<'a, TyCtxt<'tcx>> for Predicate<'tcx> {
     fn as_clause(self) -> Option<ty::Clause<'tcx>> {
         self.as_clause()
     }
@@ -55,11 +61,11 @@ impl<'tcx> rustc_type_ir::inherent::Predicate<TyCtxt<'tcx>> for Predicate<'tcx> 
     }
 }
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Predicate<'tcx> {
+impl<'a, 'tcx> rustc_type_ir::inherent::AsKindRef<'a> for Predicate<'tcx> {
     type Kind = ty::Binder<'tcx, ty::PredicateKind<'tcx>>;
 
-    fn kind(self) -> Self::Kind {
-        self.kind()
+    fn kind(self) -> &'a Self::Kind {
+        &self.0.0.internee
     }
 }
 
@@ -171,20 +177,40 @@ pub struct Clause<'tcx>(
 );
 
 impl<'tcx> rustc_type_ir::inherent::Clause<TyCtxt<'tcx>> for Clause<'tcx> {
+    #[inline]
+    fn as_predicate(self) -> <TyCtxt<'tcx> as rustc_type_ir::Interner>::Predicate {
+        self.as_predicate()
+    }
+}
+
+impl<'a, 'tcx> rustc_type_ir::inherent::ClauseRef<'a, TyCtxt<'tcx>> for Clause<'tcx>
+where
+    'tcx: 'a,
+{
     fn as_predicate(self) -> Predicate<'tcx> {
         self.as_predicate()
     }
 
-    fn instantiate_supertrait(self, tcx: TyCtxt<'tcx>, trait_ref: ty::PolyTraitRef<'tcx>) -> Self {
-        self.instantiate_supertrait(tcx, trait_ref)
+    fn instantiate_supertrait(
+        self,
+        tcx: TyCtxt<'tcx>,
+        trait_ref: ty::Binder<'tcx, &ty::TraitRef<'tcx>>,
+    ) -> Self {
+        self.instantiate_supertrait(tcx, trait_ref.map_bound(|it| *it))
     }
 }
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Clause<'tcx> {
-    type Kind = ty::Binder<'tcx, ClauseKind<'tcx>>;
+impl<'a, 'tcx> rustc_type_ir::inherent::AsOwnedKindRef<'a> for Clause<'tcx>
+where
+    'tcx: 'a,
+{
+    type Kind = ty::Binder<'tcx, &'a ClauseKind<'tcx>>;
 
     fn kind(self) -> Self::Kind {
-        self.kind()
+        self.0.0.internee.map_bound_ref(|kind| match kind {
+            PredicateKind::Clause(clause) => clause,
+            _ => unreachable!(),
+        })
     }
 }
 
@@ -239,7 +265,10 @@ impl<'tcx> Clause<'tcx> {
     }
 }
 
-impl<'tcx> rustc_type_ir::inherent::Clauses<TyCtxt<'tcx>> for ty::Clauses<'tcx> {}
+impl<'a, 'tcx> rustc_type_ir::inherent::Clauses<'a, TyCtxt<'tcx>> for ty::Clauses<'tcx> where
+    'tcx: 'a
+{
+}
 
 #[extension(pub trait ExistentialPredicateStableCmpExt<'tcx>)]
 impl<'tcx> ExistentialPredicate<'tcx> {
@@ -266,14 +295,16 @@ impl<'tcx> ExistentialPredicate<'tcx> {
 
 pub type PolyExistentialPredicate<'tcx> = ty::Binder<'tcx, ExistentialPredicate<'tcx>>;
 
-impl<'tcx> rustc_type_ir::inherent::BoundExistentialPredicates<TyCtxt<'tcx>>
+impl<'a, 'tcx> rustc_type_ir::inherent::BoundExistentialPredicates<'a, TyCtxt<'tcx>>
     for &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>>
+where
+    'tcx: 'a,
 {
     fn principal_def_id(self) -> Option<DefId> {
         self.principal_def_id()
     }
 
-    fn principal(self) -> Option<ty::PolyExistentialTraitRef<'tcx>> {
+    fn principal(self) -> Option<ty::Binder<'tcx, ty::ExistentialTraitRef<'tcx>>> {
         self.principal()
     }
 

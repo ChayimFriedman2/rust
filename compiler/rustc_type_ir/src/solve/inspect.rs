@@ -30,7 +30,7 @@ use crate::{Canonical, CanonicalVarValues, Interner};
 /// trees used mechanically has to be canonicalized as we otherwise leak
 /// inference variables from a nested `InferCtxt`.
 #[derive_where(Clone, PartialEq, Hash, Debug; I: Interner, T)]
-#[derive_where(Copy; I: Interner, T: Copy)]
+#[derive_where(Copy; I: Interner, T: Copy, CanonicalVarValues<I>: Copy)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
 pub struct State<I: Interner, T> {
     pub var_values: CanonicalVarValues<I>,
@@ -86,7 +86,8 @@ pub enum ProbeStep<I: Interner> {
 /// What kind of probe we're in. In case the probe represents a candidate, or
 /// the final result of the current goal - via [ProbeKind::Root] - we also
 /// store the [QueryResult].
-#[derive_where(Clone, Copy, PartialEq, Eq, Hash, Debug; I: Interner)]
+#[derive_where(Clone, PartialEq, Eq, Hash, Debug; I: Interner)]
+#[derive_where(Copy; I: Interner, QueryResult<I>: Copy)]
 #[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
 pub enum ProbeKind<I: Interner> {
     /// The root inference context while proving a goal.

@@ -9,7 +9,7 @@ use crate::{self as ty, InferCtxtLike, Interner};
 pub trait RelateExt: InferCtxtLike {
     fn relate<T: Relate<Self::Interner>>(
         &self,
-        param_env: <Self::Interner as Interner>::ParamEnv,
+        param_env: <Self::Interner as Interner>::ParamEnvRef<'_>,
         lhs: T,
         variance: ty::Variance,
         rhs: T,
@@ -21,7 +21,7 @@ pub trait RelateExt: InferCtxtLike {
 
     fn eq_structurally_relating_aliases<T: Relate<Self::Interner>>(
         &self,
-        param_env: <Self::Interner as Interner>::ParamEnv,
+        param_env: <Self::Interner as Interner>::ParamEnvRef<'_>,
         lhs: T,
         rhs: T,
         span: <Self::Interner as Interner>::Span,
@@ -34,7 +34,7 @@ pub trait RelateExt: InferCtxtLike {
 impl<Infcx: InferCtxtLike> RelateExt for Infcx {
     fn relate<T: Relate<Self::Interner>>(
         &self,
-        param_env: <Self::Interner as Interner>::ParamEnv,
+        param_env: <Self::Interner as Interner>::ParamEnvRef<'_>,
         lhs: T,
         variance: ty::Variance,
         rhs: T,
@@ -51,7 +51,7 @@ impl<Infcx: InferCtxtLike> RelateExt for Infcx {
 
     fn eq_structurally_relating_aliases<T: Relate<Self::Interner>>(
         &self,
-        param_env: <Self::Interner as Interner>::ParamEnv,
+        param_env: <Self::Interner as Interner>::ParamEnvRef<'_>,
         lhs: T,
         rhs: T,
         span: <Self::Interner as Interner>::Span,
@@ -72,11 +72,11 @@ impl<Infcx: InferCtxtLike> RelateExt for Infcx {
 }
 
 /// Enforce that `a` is equal to or a subtype of `b`.
-pub struct SolverRelating<'infcx, Infcx, I: Interner> {
+pub struct SolverRelating<'infcx, 'a, Infcx, I: Interner + 'a> {
     infcx: &'infcx Infcx,
     // Immutable fields.
     structurally_relate_aliases: StructurallyRelateAliases,
-    param_env: I::ParamEnv,
+    param_env: I::ParamEnvRef<'a>,
     span: I::Span,
     // Mutable fields.
     ambient_variance: ty::Variance,
@@ -106,7 +106,7 @@ pub struct SolverRelating<'infcx, Infcx, I: Interner> {
     cache: DelayedSet<(ty::Variance, I::Ty, I::Ty)>,
 }
 
-impl<'infcx, Infcx, I> SolverRelating<'infcx, Infcx, I>
+impl<'infcx, 'a, Infcx, I> SolverRelating<'infcx, 'a, Infcx, I>
 where
     Infcx: InferCtxtLike<Interner = I>,
     I: Interner,
@@ -115,7 +115,7 @@ where
         infcx: &'infcx Infcx,
         structurally_relate_aliases: StructurallyRelateAliases,
         ambient_variance: ty::Variance,
-        param_env: I::ParamEnv,
+        param_env: I::ParamEnvRef<'a>,
         span: I::Span,
     ) -> Self {
         SolverRelating {
@@ -130,7 +130,7 @@ where
     }
 }
 
-impl<Infcx, I> TypeRelation<I> for SolverRelating<'_, Infcx, I>
+impl<Infcx, I> TypeRelation<I> for SolverRelating<'_, '_, Infcx, I>
 where
     Infcx: InferCtxtLike<Interner = I>,
     I: Interner,
@@ -142,8 +142,8 @@ where
     fn relate_item_args(
         &mut self,
         item_def_id: I::DefId,
-        a_arg: I::GenericArgs,
-        b_arg: I::GenericArgs,
+        a_arg: I::GenericArgsRef<'_>,
+        b_arg: I::GenericArgsRef<'_>,
     ) -> RelateResult<I, I::GenericArgs> {
         if self.ambient_variance == ty::Invariant {
             // Avoid fetching the variance if we are in an invariant
@@ -153,7 +153,7 @@ where
         } else {
             let tcx = self.cx();
             let opt_variances = tcx.variances_of(item_def_id);
-            relate_args_with_variances(self, item_def_id, opt_variances, a_arg, b_arg, false)
+            relate_args_with_variances(self, item_def_id, opt_variances.r(), a_arg, b_arg, false)
         }
     }
 
@@ -163,44 +163,48 @@ where
         _info: VarianceDiagInfo<I>,
         a: T,
         b: T,
-    ) -> RelateResult<I, T> {
+    ) -> RelateResult<I, T::RelateResult> {
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         debug!(?self.ambient_variance, "new ambient variance");
 
-        let r = if self.ambient_variance == ty::Bivariant { Ok(a) } else { self.relate(a, b) };
+        let r = if self.ambient_variance == ty::Bivariant {
+            Ok(a.into_relate_result())
+        } else {
+            self.relate(a, b)
+        };
 
         self.ambient_variance = old_ambient_variance;
         r
     }
 
     #[instrument(skip(self), level = "trace")]
-    fn tys(&mut self, a: I::Ty, b: I::Ty) -> RelateResult<I, I::Ty> {
-        if a == b {
-            return Ok(a);
+    fn tys(&mut self, a: I::TyRef<'_>, b: I::TyRef<'_>) -> RelateResult<I, I::Ty> {
+        if a.reborrow() == b.reborrow() {
+            return Ok(a.o());
         }
 
         let infcx = self.infcx;
-        let a = infcx.shallow_resolve(a);
-        let b = infcx.shallow_resolve(b);
+        let a = infcx.shallow_resolve(a.o());
+        let b = infcx.shallow_resolve(b.o());
 
-        if self.cache.contains(&(self.ambient_variance, a, b)) {
+        if self.cache.contains(&(self.ambient_variance, a.clone(), b.clone())) {
             return Ok(a);
         }
 
         match (a.kind(), b.kind()) {
-            (ty::Infer(ty::TyVar(a_id)), ty::Infer(ty::TyVar(b_id))) => {
+            (&ty::Infer(ty::TyVar(a_id)), &ty::Infer(ty::TyVar(b_id))) => {
                 match self.ambient_variance {
                     ty::Covariant => {
                         // can't make progress on `A <: B` if both A and B are
                         // type variables, so record an obligation.
                         self.goals.push(Goal::new(
                             self.cx(),
-                            self.param_env,
+                            self.param_env.o(),
                             ty::Binder::dummy(ty::PredicateKind::Subtype(ty::SubtypePredicate {
                                 a_is_expected: true,
-                                a,
-                                b,
+                                a: a.clone(),
+                                b: b.clone(),
                             })),
                         ));
                     }
@@ -209,11 +213,11 @@ where
                         // type variables, so record an obligation.
                         self.goals.push(Goal::new(
                             self.cx(),
-                            self.param_env,
+                            self.param_env.o(),
                             ty::Binder::dummy(ty::PredicateKind::Subtype(ty::SubtypePredicate {
                                 a_is_expected: false,
-                                a: b,
-                                b: a,
+                                a: b.clone(),
+                                b: a.clone(),
                             })),
                         ));
                     }
@@ -226,69 +230,72 @@ where
                 }
             }
 
-            (ty::Infer(ty::TyVar(a_vid)), _) => {
-                infcx.instantiate_ty_var_raw(self, true, a_vid, self.ambient_variance, b)?;
+            (&ty::Infer(ty::TyVar(a_vid)), _) => {
+                infcx.instantiate_ty_var_raw(
+                    self,
+                    true,
+                    a_vid,
+                    self.ambient_variance,
+                    b.clone(),
+                )?;
             }
-            (_, ty::Infer(ty::TyVar(b_vid))) => {
+            (_, &ty::Infer(ty::TyVar(b_vid))) => {
                 infcx.instantiate_ty_var_raw(
                     self,
                     false,
                     b_vid,
                     self.ambient_variance.xform(ty::Contravariant),
-                    a,
+                    a.clone(),
                 )?;
             }
 
             _ => {
-                super_combine_tys(self.infcx, self, a, b)?;
+                super_combine_tys(self.infcx, self, a.r(), b.r())?;
             }
         }
 
-        assert!(self.cache.insert((self.ambient_variance, a, b)));
+        assert!(self.cache.insert((self.ambient_variance, a.clone(), b)));
 
-        Ok(a)
+        Ok(a.clone())
     }
 
     #[instrument(skip(self), level = "trace")]
-    fn regions(&mut self, a: I::Region, b: I::Region) -> RelateResult<I, I::Region> {
+    fn regions(&mut self, a: I::RegionRef<'_>, b: I::RegionRef<'_>) -> RelateResult<I, I::Region> {
         match self.ambient_variance {
             // Subtype(&'a u8, &'b u8) => Outlives('a: 'b) => SubRegion('b, 'a)
-            ty::Covariant => self.infcx.sub_regions(b, a, self.span),
+            ty::Covariant => self.infcx.sub_regions(b.o(), a.o(), self.span),
             // Suptype(&'a u8, &'b u8) => Outlives('b: 'a) => SubRegion('a, 'b)
-            ty::Contravariant => self.infcx.sub_regions(a, b, self.span),
-            ty::Invariant => self.infcx.equate_regions(a, b, self.span),
+            ty::Contravariant => self.infcx.sub_regions(a.o(), b.o(), self.span),
+            ty::Invariant => self.infcx.equate_regions(a.o(), b.o(), self.span),
             ty::Bivariant => {
                 unreachable!("Expected bivariance to be handled in relate_with_variance")
             }
         }
 
-        Ok(a)
+        Ok(a.o())
     }
 
     #[instrument(skip(self), level = "trace")]
-    fn consts(&mut self, a: I::Const, b: I::Const) -> RelateResult<I, I::Const> {
+    fn consts(&mut self, a: I::ConstRef<'_>, b: I::ConstRef<'_>) -> RelateResult<I, I::Const> {
         super_combine_consts(self.infcx, self, a, b)
     }
 
-    fn binders<T>(
+    fn binders<T: RelateRef<I>>(
         &mut self,
-        a: ty::Binder<I, T>,
-        b: ty::Binder<I, T>,
-    ) -> RelateResult<I, ty::Binder<I, T>>
-    where
-        T: Relate<I>,
-    {
+        a: &ty::Binder<I, T>,
+        b: &ty::Binder<I, T>,
+    ) -> RelateResult<I, ty::Binder<I, T>> {
         // If they're equal, then short-circuit.
         if a == b {
-            return Ok(a);
+            return Ok(a.clone());
         }
 
         // If they have no bound vars, relate normally.
-        if let Some(a_inner) = a.no_bound_vars()
-            && let Some(b_inner) = b.no_bound_vars()
+        if let Some(a_inner) = a.no_bound_vars_ref()
+            && let Some(b_inner) = b.no_bound_vars_ref()
         {
             self.relate(a_inner, b_inner)?;
-            return Ok(a);
+            return Ok(a.into_relate_result());
         }
 
         match self.ambient_variance {
@@ -308,15 +315,15 @@ where
             //
             // [rd]: https://rustc-dev-guide.rust-lang.org/borrow_check/region_inference/placeholders_and_universes.html
             ty::Covariant => {
-                self.infcx.enter_forall(b, |b| {
-                    let a = self.infcx.instantiate_binder_with_infer(a);
-                    self.relate(a, b)
+                self.infcx.enter_forall(b.clone(), |b| {
+                    let a = self.infcx.instantiate_binder_with_infer(a.clone());
+                    self.relate(&a, &b)
                 })?;
             }
             ty::Contravariant => {
-                self.infcx.enter_forall(a, |a| {
-                    let b = self.infcx.instantiate_binder_with_infer(b);
-                    self.relate(a, b)
+                self.infcx.enter_forall(a.clone(), |a| {
+                    let b = self.infcx.instantiate_binder_with_infer(b.clone());
+                    self.relate(&a, &b)
                 })?;
             }
 
@@ -331,26 +338,26 @@ where
             // `exists<..> A == for<..> B` and `exists<..> B == for<..> A`.
             // Check if `exists<..> A == for<..> B`
             ty::Invariant => {
-                self.infcx.enter_forall(b, |b| {
-                    let a = self.infcx.instantiate_binder_with_infer(a);
-                    self.relate(a, b)
+                self.infcx.enter_forall(b.into_relate_result(), |b| {
+                    let a = self.infcx.instantiate_binder_with_infer(a.into_relate_result());
+                    self.relate(&a, &b)
                 })?;
 
                 // Check if `exists<..> B == for<..> A`.
-                self.infcx.enter_forall(a, |a| {
-                    let b = self.infcx.instantiate_binder_with_infer(b);
-                    self.relate(a, b)
+                self.infcx.enter_forall(a.into_relate_result(), |a| {
+                    let b = self.infcx.instantiate_binder_with_infer(b.into_relate_result());
+                    self.relate(&a, &b)
                 })?;
             }
             ty::Bivariant => {
                 unreachable!("Expected bivariance to be handled in relate_with_variance")
             }
         }
-        Ok(a)
+        Ok(a.into_relate_result())
     }
 }
 
-impl<Infcx, I> PredicateEmittingRelation<Infcx> for SolverRelating<'_, Infcx, I>
+impl<Infcx, I> PredicateEmittingRelation<Infcx> for SolverRelating<'_, '_, Infcx, I>
 where
     Infcx: InferCtxtLike<Interner = I>,
     I: Interner,
@@ -359,8 +366,8 @@ where
         Span::dummy()
     }
 
-    fn param_env(&self) -> I::ParamEnv {
-        self.param_env
+    fn param_env(&self) -> I::ParamEnvRef<'_> {
+        self.param_env.reborrow()
     }
 
     fn structurally_relate_aliases(&self) -> StructurallyRelateAliases {
@@ -372,7 +379,9 @@ where
         obligations: impl IntoIterator<Item: ty::Upcast<I, I::Predicate>>,
     ) {
         self.goals.extend(
-            obligations.into_iter().map(|pred| Goal::new(self.infcx.cx(), self.param_env, pred)),
+            obligations
+                .into_iter()
+                .map(|pred| Goal::new(self.infcx.cx(), self.param_env.o(), pred)),
         );
     }
 

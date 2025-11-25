@@ -18,7 +18,12 @@ impl<T> ExpectedFound<T> {
 }
 
 // Data structures used in type unification
-#[derive_where(Clone, Copy, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, PartialEq, Debug; I: Interner)]
+#[derive_where(
+    Copy;
+    I: Interner,
+    I::BoundExistentialPredicates: Copy, I::Ty: Copy, I::Const: Copy, I::Region: Copy,
+)]
 #[derive(TypeVisitable_Generic)]
 #[cfg_attr(feature = "nightly", rustc_pass_by_value)]
 pub enum TypeError<I: Interner> {

@@ -99,7 +99,7 @@ where
                     self.universe_indices
                 );
             }
-            ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), br)
+            &ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), br)
                 if debruijn >= self.current_index =>
             {
                 let universe = self.universe_for(debruijn);
@@ -122,7 +122,7 @@ where
                     self.universe_indices
                 );
             }
-            ty::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_ty)
+            &ty::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_ty)
                 if debruijn >= self.current_index =>
             {
                 let universe = self.universe_for(debruijn);
@@ -146,7 +146,7 @@ where
                     self.universe_indices
                 );
             }
-            ty::ConstKind::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_const)
+            &ty::ConstKind::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_const)
                 if debruijn >= self.current_index =>
             {
                 let universe = self.universe_for(debruijn);
