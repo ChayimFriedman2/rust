@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::mem;
 
 use rustc_data_structures::sso::SsoHashMap;
@@ -10,6 +11,8 @@ use rustc_middle::ty::{
     TypeVisitableExt, TypeVisitor, TypingMode,
 };
 use rustc_span::Span;
+use rustc_type_ir::TypeFoldable;
+use rustc_type_ir::relate::RelateRef;
 use tracing::{debug, instrument, warn};
 
 use super::{
@@ -252,14 +255,17 @@ impl<'tcx> InferCtxt<'tcx> {
 
     /// Attempts to generalize `source_term` for the type variable `target_vid`.
     /// This checks for cycles -- that is, whether `source_term` references `target_vid`.
-    fn generalize<T: Into<Term<'tcx>> + Relate<TyCtxt<'tcx>>>(
+    fn generalize<T>(
         &self,
         span: Span,
         structurally_relate_aliases: StructurallyRelateAliases,
         target_vid: impl Into<TermVid>,
         ambient_variance: ty::Variance,
         source_term: T,
-    ) -> RelateResult<'tcx, Generalization<T>> {
+    ) -> RelateResult<'tcx, Generalization<T::RelateResult>>
+    where
+        T: Into<Term<'tcx>> + Relate<TyCtxt<'tcx>> + TypeFoldable<TyCtxt<'tcx>> + Copy,
+    {
         assert!(!source_term.has_escaping_bound_vars());
         let (for_universe, root_vid) = match target_vid.into() {
             TermVid::Ty(ty_vid) => {
@@ -431,7 +437,7 @@ impl<'tcx> Generalizer<'_, 'tcx> {
         }
 
         let is_nested_alias = mem::replace(&mut self.in_alias, true);
-        let result = match self.relate(alias, alias) {
+        let result = match self.relate(&alias, &alias) {
             Ok(alias) => Ok(alias.to_ty(self.cx())),
             Err(e) => {
                 if is_nested_alias {
@@ -486,14 +492,14 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, variance, b), ret)]
+    #[instrument(level = "debug", skip(self, variance, a, b), ret)]
     fn relate_with_variance<T: Relate<TyCtxt<'tcx>>>(
         &mut self,
         variance: ty::Variance,
         _info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         debug!(?self.ambient_variance, "new ambient variance");
@@ -750,13 +756,13 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
     #[instrument(level = "debug", skip(self), ret)]
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        _: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        _: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
-        let result = self.relate(a.skip_binder(), a.skip_binder())?;
+        let result = self.relate(a.skip_binder_ref(), a.skip_binder_ref())?;
         Ok(a.rebind(result))
     }
 }

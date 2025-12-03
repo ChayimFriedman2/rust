@@ -127,7 +127,7 @@ impl<'a, D: SolverDelegate<Interner = I>, I: Interner> Canonicalizer<'a, D, I> {
         // placeholders.
         if !param_env.has_non_region_infer() {
             delegate.cx().canonical_param_env_cache_get_or_insert(
-                param_env,
+                param_env.clone(),
                 || {
                     let mut variables = Vec::new();
                     let mut env_canonicalizer = Canonicalizer {
@@ -141,24 +141,24 @@ impl<'a, D: SolverDelegate<Interner = I>, I: Interner> Canonicalizer<'a, D, I> {
 
                         cache: Default::default(),
                     };
-                    let param_env = param_env.fold_with(&mut env_canonicalizer);
+                    let param_env = param_env.clone().fold_with(&mut env_canonicalizer);
                     debug_assert!(env_canonicalizer.sub_root_lookup_table.is_empty());
                     CanonicalParamEnvCacheEntry {
-                        param_env,
+                        param_env: param_env.clone(),
                         variable_lookup_table: env_canonicalizer.variable_lookup_table,
                         var_kinds: env_canonicalizer.var_kinds,
                         variables,
                     }
                 },
                 |&CanonicalParamEnvCacheEntry {
-                     param_env,
+                     ref param_env,
                      variables: ref cache_variables,
                      ref variable_lookup_table,
                      ref var_kinds,
                  }| {
                     debug_assert!(variables.is_empty());
-                    variables.extend(cache_variables.iter().copied());
-                    (param_env, variable_lookup_table.clone(), var_kinds.clone())
+                    variables.extend(cache_variables.iter().cloned());
+                    (param_env.clone(), variable_lookup_table.clone(), var_kinds.clone())
                 },
             )
         } else {
@@ -222,7 +222,7 @@ impl<'a, D: SolverDelegate<Interner = I>, I: Interner> Canonicalizer<'a, D, I> {
         };
         let goal = Goal { param_env, predicate };
 
-        let predefined_opaques_in_body = input.predefined_opaques_in_body;
+        let predefined_opaques_in_body = input.predefined_opaques_in_body.clone();
         let predefined_opaques_in_body =
             if input.predefined_opaques_in_body.has_type_flags(NEEDS_CANONICAL) {
                 predefined_opaques_in_body.fold_with(&mut rest_canonicalizer)
@@ -248,17 +248,17 @@ impl<'a, D: SolverDelegate<Interner = I>, I: Interner> Canonicalizer<'a, D, I> {
         let arg = arg.into();
         let idx = if self.variables.len() > 16 {
             if self.variable_lookup_table.is_empty() {
-                self.variable_lookup_table.extend(self.variables.iter().copied().zip(0..));
+                self.variable_lookup_table.extend(self.variables.iter().cloned().zip(0..));
             }
 
-            *self.variable_lookup_table.entry(arg).or_insert_with(|| {
+            *self.variable_lookup_table.entry(arg.clone()).or_insert_with(|| {
                 let var = self.variables.len();
                 self.variables.push(arg);
                 self.var_kinds.push(kind);
                 var
             })
         } else {
-            self.variables.iter().position(|&v| v == arg).unwrap_or_else(|| {
+            self.variables.iter().position(|v| *v == arg).unwrap_or_else(|| {
                 let var = self.variables.len();
                 self.variables.push(arg);
                 self.var_kinds.push(kind);
@@ -314,7 +314,7 @@ impl<'a, D: SolverDelegate<Interner = I>, I: Interner> Canonicalizer<'a, D, I> {
     }
 
     fn inner_fold_ty(&mut self, t: I::Ty) -> I::Ty {
-        let kind = match t.kind() {
+        let kind = match *t.kind() {
             ty::Infer(i) => match i {
                 ty::TyVar(vid) => {
                     debug_assert_eq!(
@@ -411,7 +411,7 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> TypeFolder<I> for Canonicaliz
     }
 
     fn fold_region(&mut self, r: I::Region) -> I::Region {
-        let kind = match r.kind() {
+        let kind = match *r.kind() {
             ty::ReBound(..) => return r,
 
             // We don't canonicalize `ReStatic` in the `param_env` as we use it
@@ -477,18 +477,18 @@ impl<D: SolverDelegate<Interner = I>, I: Interner> TypeFolder<I> for Canonicaliz
     }
 
     fn fold_ty(&mut self, t: I::Ty) -> I::Ty {
-        if let Some(&ty) = self.cache.get(&t) {
-            ty
+        if let Some(ty) = self.cache.get(&t) {
+            ty.clone()
         } else {
-            let res = self.inner_fold_ty(t);
-            let old = self.cache.insert(t, res);
+            let res = self.inner_fold_ty(t.clone());
+            let old = self.cache.insert(t, res.clone());
             assert_eq!(old, None);
             res
         }
     }
 
     fn fold_const(&mut self, c: I::Const) -> I::Const {
-        let kind = match c.kind() {
+        let kind = match *c.kind() {
             ty::ConstKind::Infer(i) => match i {
                 ty::InferConst::Var(vid) => {
                     debug_assert_eq!(

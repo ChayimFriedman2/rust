@@ -204,28 +204,28 @@ impl<'tcx> AdtDef<'tcx> {
 }
 
 impl<'tcx> rustc_type_ir::inherent::AdtDef<TyCtxt<'tcx>> for AdtDef<'tcx> {
-    fn def_id(self) -> DefId {
+    fn def_id(&self) -> DefId {
         self.did()
     }
 
-    fn is_struct(self) -> bool {
-        self.is_struct()
+    fn is_struct(&self) -> bool {
+        (*self).is_struct()
     }
 
-    fn struct_tail_ty(self, interner: TyCtxt<'tcx>) -> Option<ty::EarlyBinder<'tcx, Ty<'tcx>>> {
+    fn struct_tail_ty(&self, interner: TyCtxt<'tcx>) -> Option<ty::EarlyBinder<'tcx, Ty<'tcx>>> {
         Some(interner.type_of(self.non_enum_variant().tail_opt()?.did))
     }
 
-    fn is_phantom_data(self) -> bool {
-        self.is_phantom_data()
+    fn is_phantom_data(&self) -> bool {
+        (*self).is_phantom_data()
     }
 
-    fn is_manually_drop(self) -> bool {
-        self.is_manually_drop()
+    fn is_manually_drop(&self) -> bool {
+        (*self).is_manually_drop()
     }
 
     fn all_field_tys(
-        self,
+        &self,
         tcx: TyCtxt<'tcx>,
     ) -> ty::EarlyBinder<'tcx, impl IntoIterator<Item = Ty<'tcx>>> {
         ty::EarlyBinder::bind(
@@ -234,19 +234,19 @@ impl<'tcx> rustc_type_ir::inherent::AdtDef<TyCtxt<'tcx>> for AdtDef<'tcx> {
     }
 
     fn sizedness_constraint(
-        self,
+        &self,
         tcx: TyCtxt<'tcx>,
         sizedness: ty::SizedTraitKind,
     ) -> Option<ty::EarlyBinder<'tcx, Ty<'tcx>>> {
-        self.sizedness_constraint(tcx, sizedness)
+        (*self).sizedness_constraint(tcx, sizedness)
     }
 
-    fn is_fundamental(self) -> bool {
-        self.is_fundamental()
+    fn is_fundamental(&self) -> bool {
+        (*self).is_fundamental()
     }
 
-    fn destructor(self, tcx: TyCtxt<'tcx>) -> Option<AdtDestructorKind> {
-        Some(match tcx.constness(self.destructor(tcx)?.did) {
+    fn destructor(&self, tcx: TyCtxt<'tcx>) -> Option<AdtDestructorKind> {
+        Some(match tcx.constness((*self).destructor(tcx)?.did) {
             hir::Constness::Const => AdtDestructorKind::Const,
             hir::Constness::NotConst => AdtDestructorKind::NotConst,
         })

@@ -56,43 +56,43 @@ where
 
     match (a.kind(), b.kind()) {
         (ty::Error(e), _) | (_, ty::Error(e)) => {
-            infcx.set_tainted_by_errors(e);
-            return Ok(Ty::new_error(infcx.cx(), e));
+            infcx.set_tainted_by_errors(*e);
+            return Ok(Ty::new_error(infcx.cx(), *e));
         }
 
         // Relate integral variables to other types
         (ty::Infer(ty::IntVar(a_id)), ty::Infer(ty::IntVar(b_id))) => {
-            infcx.equate_int_vids_raw(a_id, b_id);
+            infcx.equate_int_vids_raw(*a_id, *b_id);
             Ok(a)
         }
         (ty::Infer(ty::IntVar(v_id)), ty::Int(v)) => {
-            infcx.instantiate_int_var_raw(v_id, ty::IntVarValue::IntType(v));
+            infcx.instantiate_int_var_raw(*v_id, ty::IntVarValue::IntType(*v));
             Ok(b)
         }
         (ty::Int(v), ty::Infer(ty::IntVar(v_id))) => {
-            infcx.instantiate_int_var_raw(v_id, ty::IntVarValue::IntType(v));
+            infcx.instantiate_int_var_raw(*v_id, ty::IntVarValue::IntType(*v));
             Ok(a)
         }
         (ty::Infer(ty::IntVar(v_id)), ty::Uint(v)) => {
-            infcx.instantiate_int_var_raw(v_id, ty::IntVarValue::UintType(v));
+            infcx.instantiate_int_var_raw(*v_id, ty::IntVarValue::UintType(*v));
             Ok(b)
         }
         (ty::Uint(v), ty::Infer(ty::IntVar(v_id))) => {
-            infcx.instantiate_int_var_raw(v_id, ty::IntVarValue::UintType(v));
+            infcx.instantiate_int_var_raw(*v_id, ty::IntVarValue::UintType(*v));
             Ok(a)
         }
 
         // Relate floating-point variables to other types
         (ty::Infer(ty::FloatVar(a_id)), ty::Infer(ty::FloatVar(b_id))) => {
-            infcx.equate_float_vids_raw(a_id, b_id);
+            infcx.equate_float_vids_raw(*a_id, *b_id);
             Ok(a)
         }
         (ty::Infer(ty::FloatVar(v_id)), ty::Float(v)) => {
-            infcx.instantiate_float_var_raw(v_id, ty::FloatVarValue::Known(v));
+            infcx.instantiate_float_var_raw(*v_id, ty::FloatVarValue::Known(*v));
             Ok(b)
         }
         (ty::Float(v), ty::Infer(ty::FloatVar(v_id))) => {
-            infcx.instantiate_float_var_raw(v_id, ty::FloatVarValue::Known(v));
+            infcx.instantiate_float_var_raw(*v_id, ty::FloatVarValue::Known(*v));
             Ok(a)
         }
 
@@ -116,7 +116,7 @@ where
             match relation.structurally_relate_aliases() {
                 StructurallyRelateAliases::Yes => structurally_relate_tys(relation, a, b),
                 StructurallyRelateAliases::No => {
-                    relation.register_alias_relate_predicate(a, b);
+                    relation.register_alias_relate_predicate(a.clone(), b);
                     Ok(a)
                 }
             }
@@ -171,8 +171,8 @@ where
 
     match (a.kind(), b.kind()) {
         (
-            ty::ConstKind::Infer(ty::InferConst::Var(a_vid)),
-            ty::ConstKind::Infer(ty::InferConst::Var(b_vid)),
+            &ty::ConstKind::Infer(ty::InferConst::Var(a_vid)),
+            &ty::ConstKind::Infer(ty::InferConst::Var(b_vid)),
         ) => {
             infcx.equate_const_vids_raw(a_vid, b_vid);
             Ok(a)
@@ -186,13 +186,13 @@ where
             )
         }
 
-        (ty::ConstKind::Infer(ty::InferConst::Var(vid)), _) => {
-            infcx.instantiate_const_var_raw(relation, true, vid, b)?;
+        (&ty::ConstKind::Infer(ty::InferConst::Var(vid)), _) => {
+            infcx.instantiate_const_var_raw(relation, true, vid, b.clone())?;
             Ok(b)
         }
 
-        (_, ty::ConstKind::Infer(ty::InferConst::Var(vid))) => {
-            infcx.instantiate_const_var_raw(relation, false, vid, a)?;
+        (_, &ty::ConstKind::Infer(ty::InferConst::Var(vid))) => {
+            infcx.instantiate_const_var_raw(relation, false, vid, a.clone())?;
             Ok(a)
         }
 
@@ -204,11 +204,11 @@ where
                     relation.register_predicates([if infcx.next_trait_solver() {
                         ty::PredicateKind::AliasRelate(
                             a.into(),
-                            b.into(),
+                            b.clone().into(),
                             ty::AliasRelationDirection::Equate,
                         )
                     } else {
-                        ty::PredicateKind::ConstEquate(a, b)
+                        ty::PredicateKind::ConstEquate(a, b.clone())
                     }]);
 
                     Ok(b)

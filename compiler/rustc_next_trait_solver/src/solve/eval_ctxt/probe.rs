@@ -47,8 +47,8 @@ where
         let max_input_universe = outer.max_input_universe;
         let mut nested = EvalCtxt {
             delegate,
-            variables: outer.variables,
-            var_values: outer.var_values,
+            variables: outer.variables.clone(),
+            var_values: outer.var_values.clone(),
             current_goal_kind: outer.current_goal_kind,
             max_input_universe,
             initial_opaque_types_storage_num_entries: outer
@@ -128,7 +128,7 @@ where
                 ecx: self,
                 probe_kind: move |result: &QueryResult<I>| inspect::ProbeKind::TraitCandidate {
                     source,
-                    result: *result,
+                    result: result.clone(),
                 },
                 _result: PhantomData,
             },

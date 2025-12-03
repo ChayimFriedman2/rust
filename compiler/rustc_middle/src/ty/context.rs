@@ -106,7 +106,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
 
     type GenericArgs = ty::GenericArgsRef<'tcx>;
 
-    type GenericArgsSlice = &'tcx [ty::GenericArg<'tcx>];
+    type GenericArgsSlice<'a>
+        = &'tcx [ty::GenericArg<'tcx>]
+    where
+        Self: 'a;
     type GenericArg = ty::GenericArg<'tcx>;
     type Term = ty::Term<'tcx>;
     type BoundVarKinds = &'tcx List<ty::BoundVariableKind>;
@@ -143,7 +146,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type Ty = Ty<'tcx>;
     type Tys = &'tcx List<Ty<'tcx>>;
 
-    type FnInputTys = &'tcx [Ty<'tcx>];
+    type FnInputTys<'a>
+        = &'tcx [Ty<'tcx>]
+    where
+        Self: 'a;
     type ParamTy = ParamTy;
     type BoundTy = ty::BoundTy;
     type Symbol = Symbol;
@@ -188,8 +194,8 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     ) -> Self::Tracked<T> {
         WithDepNode::new(dep_node, data)
     }
-    fn get_tracked<T: fmt::Debug + Clone>(self, tracked: &Self::Tracked<T>) -> T {
-        tracked.get(self)
+    fn get_tracked<T: fmt::Debug + Clone>(self, tracked: &Self::Tracked<T>) -> &T {
+        tracked.get_ref(self)
     }
 
     fn with_global_cache<R>(self, f: impl FnOnce(&mut search_graph::GlobalCache<Self>) -> R) -> R {
@@ -228,6 +234,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         self.variances_of(def_id)
     }
 
+    fn variances_into_iter(variances: Self::VariancesOf) -> impl Iterator<Item = ty::Variance> {
+        variances.iter().copied()
+    }
+
     fn opt_alias_variances(
         self,
         kind: impl Into<ty::AliasTermKind>,
@@ -251,7 +261,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         self.adt_def(adt_def_id)
     }
 
-    fn alias_ty_kind(self, alias: ty::AliasTy<'tcx>) -> ty::AliasTyKind {
+    fn alias_ty_kind(self, alias: &ty::AliasTy<'tcx>) -> ty::AliasTyKind {
         match self.def_kind(alias.def_id) {
             DefKind::AssocTy => {
                 if let DefKind::Impl { of_trait: false } = self.def_kind(self.parent(alias.def_id))
@@ -267,7 +277,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         }
     }
 
-    fn alias_term_kind(self, alias: ty::AliasTerm<'tcx>) -> ty::AliasTermKind {
+    fn alias_term_kind(self, alias: &ty::AliasTerm<'tcx>) -> ty::AliasTermKind {
         match self.def_kind(alias.def_id) {
             DefKind::AssocTy => {
                 if let DefKind::Impl { of_trait: false } = self.def_kind(self.parent(alias.def_id))
@@ -298,7 +308,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     fn trait_ref_and_own_args_for_alias(
         self,
         def_id: DefId,
-        args: ty::GenericArgsRef<'tcx>,
+        args: &ty::GenericArgsRef<'tcx>,
     ) -> (ty::TraitRef<'tcx>, &'tcx [ty::GenericArg<'tcx>]) {
         debug_assert_matches!(self.def_kind(def_id), DefKind::AssocTy | DefKind::AssocConst);
         let trait_def_id = self.parent(def_id);
@@ -319,11 +329,11 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         self.mk_args_from_iter(args)
     }
 
-    fn check_args_compatible(self, def_id: DefId, args: ty::GenericArgsRef<'tcx>) -> bool {
+    fn check_args_compatible(self, def_id: DefId, args: &ty::GenericArgsRef<'tcx>) -> bool {
         self.check_args_compatible(def_id, args)
     }
 
-    fn debug_assert_args_compatible(self, def_id: DefId, args: ty::GenericArgsRef<'tcx>) {
+    fn debug_assert_args_compatible(self, def_id: DefId, args: &ty::GenericArgsRef<'tcx>) {
         self.debug_assert_args_compatible(def_id, args);
     }
 
@@ -333,7 +343,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     fn debug_assert_existential_args_compatible(
         self,
         def_id: Self::DefId,
-        args: Self::GenericArgs,
+        args: &Self::GenericArgs,
     ) {
         // FIXME: We could perhaps add a `skip: usize` to `debug_assert_args_compatible`
         // to avoid needing to reintern the set of args...
@@ -1074,7 +1084,7 @@ impl<'tcx> CtxtInterners<'tcx> {
         Predicate(Interned::new_unchecked(
             self.predicate
                 .intern(kind, |kind| {
-                    let flags = ty::FlagComputation::<TyCtxt<'tcx>>::for_predicate(kind);
+                    let flags = ty::FlagComputation::<TyCtxt<'tcx>>::for_predicate(&kind);
 
                     let stable_hash = self.stable_hash(&flags, sess, untracked, &kind);
 

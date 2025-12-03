@@ -5,6 +5,7 @@
 //! 2. equate the self type, and
 //! 3. instantiate and register where clauses.
 
+use rustc_type_ir::inherent::*;
 use rustc_type_ir::{self as ty, Interner};
 
 use crate::delegate::SolverDelegate;
@@ -17,19 +18,19 @@ where
 {
     pub(super) fn normalize_inherent_associated_term(
         &mut self,
-        goal: Goal<I, ty::NormalizesTo<I>>,
+        goal: &Goal<I, ty::NormalizesTo<I>>,
     ) -> QueryResult<I> {
         let cx = self.cx();
-        let inherent = goal.predicate.alias;
+        let inherent = &goal.predicate.alias;
 
         let impl_def_id = cx.parent(inherent.def_id);
         let impl_args = self.fresh_args_for_item(impl_def_id);
 
         // Equate impl header and add impl where clauses
         self.eq(
-            goal.param_env,
-            inherent.self_ty(),
-            cx.type_of(impl_def_id).instantiate(cx, impl_args),
+            goal.param_env.clone(),
+            &inherent.self_ty(),
+            &cx.type_of(impl_def_id).instantiate(cx, &impl_args),
         )?;
 
         // Equate IAT with the RHS of the project goal
@@ -47,7 +48,7 @@ where
         self.add_goals(
             GoalSource::Misc,
             cx.predicates_of(inherent.def_id)
-                .iter_instantiated(cx, inherent_args)
+                .iter_instantiated(cx, inherent_args.as_slice())
                 .map(|pred| goal.with(cx, pred)),
         );
 

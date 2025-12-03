@@ -5,7 +5,9 @@ use std::hash::Hash;
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
-use rustc_type_ir_macros::{Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic};
+use rustc_type_ir_macros::{
+    CopyWhereFields, Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic,
+};
 
 use crate::lang_items::SolverTraitLangItem;
 use crate::search_graph::PathKind;
@@ -32,8 +34,7 @@ pub struct NoSolution;
 /// Most of the time the `param_env` contains the `where`-bounds of the function
 /// we're currently typechecking while the `predicate` is some trait bound.
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, P)]
-#[derive_where(Copy; I: Interner, P: Copy)]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic, CopyWhereFields)]
 #[cfg_attr(
     feature = "nightly",
     derive(Decodable_NoContext, Encodable_NoContext, HashStable_NoContext)
@@ -51,8 +52,8 @@ impl<I: Interner, P> Goal<I, P> {
     }
 
     /// Updates the goal to one with a different `predicate` but the same `param_env`.
-    pub fn with<Q>(self, cx: I, predicate: impl Upcast<I, Q>) -> Goal<I, Q> {
-        Goal { param_env: self.param_env, predicate: predicate.upcast(cx) }
+    pub fn with<Q>(&self, cx: I, predicate: impl Upcast<I, Q>) -> Goal<I, Q> {
+        Goal { param_env: self.param_env.clone(), predicate: predicate.upcast(cx) }
     }
 }
 
@@ -94,8 +95,7 @@ pub enum GoalSource {
 }
 
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, Goal<I, P>)]
-#[derive_where(Copy; I: Interner, Goal<I, P>: Copy)]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic, CopyWhereFields)]
 #[cfg_attr(
     feature = "nightly",
     derive(Decodable_NoContext, Encodable_NoContext, HashStable_NoContext)
@@ -234,8 +234,8 @@ pub enum BuiltinImplSource {
     TraitUpcasting(usize),
 }
 
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic, CopyWhereFields)]
 #[cfg_attr(feature = "nightly", derive(HashStable_NoContext))]
 pub struct Response<I: Interner> {
     pub certainty: Certainty,

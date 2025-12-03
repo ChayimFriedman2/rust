@@ -2056,7 +2056,11 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
     /// with the other type. A TyVar inference type is compatible with any type, and an IntVar or
     /// FloatVar inference type are compatible with themselves or their concrete types (Int and
     /// Float types, respectively). When comparing two ADTs, these rules apply recursively.
-    pub fn same_type_modulo_infer<T: relate::Relate<TyCtxt<'tcx>>>(&self, a: T, b: T) -> bool {
+    pub fn same_type_modulo_infer<T: relate::Relate<TyCtxt<'tcx>> + TypeFoldable<TyCtxt<'tcx>>>(
+        &self,
+        a: T,
+        b: T,
+    ) -> bool {
         let (a, b) = self.resolve_vars_if_possible((a, b));
         SameTypeModuloInfer(self).relate(a, b).is_ok()
     }
@@ -2075,7 +2079,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for SameTypeModuloInfer<'_, 'tcx> {
         _info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> relate::RelateResult<'tcx, T> {
+    ) -> relate::RelateResult<'tcx, T::RelateResult> {
         self.relate(a, b)
     }
 
@@ -2116,13 +2120,13 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for SameTypeModuloInfer<'_, 'tcx> {
 
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        b: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        b: &ty::Binder<'tcx, T>,
     ) -> relate::RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: relate::Relate<TyCtxt<'tcx>>,
+        T: relate::RelateRef<TyCtxt<'tcx>>,
     {
-        Ok(a.rebind(self.relate(a.skip_binder(), b.skip_binder())?))
+        Ok(a.rebind(self.relate(a.skip_binder_ref(), b.skip_binder_ref())?))
     }
 
     fn consts(

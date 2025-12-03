@@ -602,7 +602,7 @@ impl<'tcx> LivenessContext<'_, '_, 'tcx> {
     fn make_all_regions_live(
         location_map: &DenseLocationMap,
         typeck: &mut TypeChecker<'_, 'tcx>,
-        value: impl TypeVisitable<TyCtxt<'tcx>> + Relate<TyCtxt<'tcx>>,
+        value: impl TypeVisitable<TyCtxt<'tcx>> + Relate<TyCtxt<'tcx>> + Copy,
         live_at: &IntervalSet<PointIndex>,
     ) {
         debug!("make_all_regions_live(value={:?})", value);

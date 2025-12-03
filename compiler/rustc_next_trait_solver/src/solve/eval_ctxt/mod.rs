@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::mem;
 use std::ops::ControlFlow;
 
@@ -58,8 +59,11 @@ enum CurrentGoalKind {
 }
 
 impl CurrentGoalKind {
-    fn from_query_input<I: Interner>(cx: I, input: QueryInput<I, I::Predicate>) -> CurrentGoalKind {
-        match input.goal.predicate.kind().skip_binder() {
+    fn from_query_input<I: Interner>(
+        cx: I,
+        input: &QueryInput<I, I::Predicate>,
+    ) -> CurrentGoalKind {
+        match input.goal.predicate.kind().skip_binder_ref() {
             ty::PredicateKind::Clause(ty::ClauseKind::Trait(pred)) => {
                 if cx.trait_is_coinductive(pred.trait_ref.def_id) {
                     CurrentGoalKind::CoinductiveTrait
@@ -253,7 +257,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    pub(super) fn typing_mode(&self) -> TypingMode<I> {
+    pub(super) fn typing_mode(&self) -> &TypingMode<I> {
         self.delegate.typing_mode()
     }
 
@@ -350,13 +354,14 @@ where
     pub(super) fn enter_canonical<R>(
         cx: I,
         search_graph: &'a mut SearchGraph<D>,
-        canonical_input: CanonicalInput<I>,
+        canonical_input: &CanonicalInput<I>,
         proof_tree_builder: &mut inspect::ProofTreeBuilder<D>,
         f: impl FnOnce(&mut EvalCtxt<'_, D>, Goal<I, I::Predicate>) -> R,
     ) -> R {
-        let (ref delegate, input, var_values) = D::build_with_canonical(cx, &canonical_input);
+        let (ref delegate, input, var_values) = D::build_with_canonical(cx, canonical_input);
         for (key, ty) in input.predefined_opaques_in_body.iter() {
-            let prev = delegate.register_hidden_type_in_storage(key, ty, I::Span::dummy());
+            let prev =
+                delegate.register_hidden_type_in_storage(key.clone(), ty.clone(), I::Span::dummy());
             // It may be possible that two entries in the opaque type storage end up
             // with the same key after resolving contained inference variables.
             //
@@ -376,9 +381,9 @@ where
         let initial_opaque_types_storage_num_entries = delegate.opaque_types_storage_num_entries();
         let mut ecx = EvalCtxt {
             delegate,
-            variables: canonical_input.canonical.variables,
-            var_values,
-            current_goal_kind: CurrentGoalKind::from_query_input(cx, input),
+            variables: canonical_input.canonical.variables.clone(),
+            var_values: var_values.clone(),
+            current_goal_kind: CurrentGoalKind::from_query_input(cx, &input),
             max_input_universe: canonical_input.canonical.max_universe,
             initial_opaque_types_storage_num_entries,
             search_graph,
@@ -442,7 +447,7 @@ where
             ref sub_roots,
             stalled_certainty,
         }) = stalled_on
-            && !stalled_vars.iter().any(|value| self.delegate.is_changed_arg(*value))
+            && !stalled_vars.iter().any(|value| self.delegate.is_changed_arg(value.clone()))
             && !sub_roots
                 .iter()
                 .any(|&vid| self.delegate.sub_unification_table_root_var(vid) != vid)
@@ -465,10 +470,11 @@ where
         let opaque_types = self.delegate.clone_opaque_types_lookup_table();
         let (goal, opaque_types) = eager_resolve_vars(self.delegate, (goal, opaque_types));
 
-        let (orig_values, canonical_goal) = canonicalize_goal(self.delegate, goal, &opaque_types);
+        let (orig_values, canonical_goal) =
+            canonicalize_goal(self.delegate, goal.clone(), &opaque_types);
         let canonical_result = self.search_graph.evaluate_goal(
             self.cx(),
-            canonical_goal,
+            &canonical_goal,
             self.step_kind_for_source(source),
             &mut inspect::ProofTreeBuilder::new_noop(),
         );
@@ -478,11 +484,11 @@ where
         };
 
         let has_changed =
-            if !has_only_region_constraints(response) { HasChanged::Yes } else { HasChanged::No };
+            if !has_only_region_constraints(&response) { HasChanged::Yes } else { HasChanged::No };
 
         let (normalization_nested_goals, certainty) = instantiate_and_apply_query_response(
             self.delegate,
-            goal.param_env,
+            goal.param_env.clone(),
             &orig_values,
             response,
             self.origin_span,
@@ -522,12 +528,12 @@ where
 
                     // Remove the canonicalized universal vars, since we only care about stalled existentials.
                     let mut sub_roots = Vec::new();
-                    stalled_vars.retain(|arg| match arg.kind() {
+                    stalled_vars.retain(|arg| match arg.clone().kind() {
                         // Lifetimes can never stall goals.
                         ty::GenericArgKind::Lifetime(_) => false,
                         ty::GenericArgKind::Type(ty) => match ty.kind() {
                             ty::Infer(ty::TyVar(vid)) => {
-                                sub_roots.push(self.delegate.sub_unification_table_root_var(vid));
+                                sub_roots.push(self.delegate.sub_unification_table_root_var(*vid));
                                 true
                             }
                             ty::Infer(_) => true,
@@ -564,9 +570,9 @@ where
     pub(super) fn compute_goal(&mut self, goal: Goal<I, I::Predicate>) -> QueryResult<I> {
         let Goal { param_env, predicate } = goal;
         let kind = predicate.kind();
-        self.enter_forall(kind, |ecx, kind| match kind {
+        self.enter_forall(kind.clone(), |ecx, kind| match kind {
             ty::PredicateKind::Clause(ty::ClauseKind::Trait(predicate)) => {
-                ecx.compute_trait_goal(Goal { param_env, predicate }).map(|(r, _via)| r)
+                ecx.compute_trait_goal(&Goal { param_env, predicate }).map(|(r, _via)| r)
             }
             ty::PredicateKind::Clause(ty::ClauseKind::HostEffect(predicate)) => {
                 ecx.compute_host_effect_goal(Goal { param_env, predicate })
@@ -605,7 +611,7 @@ where
                 panic!("ConstEquate should not be emitted when `-Znext-solver` is active")
             }
             ty::PredicateKind::NormalizesTo(predicate) => {
-                ecx.compute_normalizes_to_goal(Goal { param_env, predicate })
+                ecx.compute_normalizes_to_goal(&Goal { param_env, predicate })
             }
             ty::PredicateKind::AliasRelate(lhs, rhs, direction) => {
                 ecx.compute_alias_relate_goal(Goal { param_env, predicate: (lhs, rhs, direction) })
@@ -643,7 +649,7 @@ where
         // If this loop did not result in any progress, what's our final certainty.
         let mut unchanged_certainty = Some(Certainty::Yes);
         for (source, goal, stalled_on) in mem::take(&mut self.nested_goals) {
-            if let Some(certainty) = self.delegate.compute_goal_fast_path(goal, self.origin_span) {
+            if let Some(certainty) = self.delegate.compute_goal_fast_path(&goal, self.origin_span) {
                 match certainty {
                     Certainty::Yes => {}
                     Certainty::Maybe { .. } => {
@@ -669,9 +675,11 @@ where
                 let pred = pred.no_bound_vars().unwrap();
                 // Replace the goal with an unconstrained infer var, so the
                 // RHS does not affect projection candidate assembly.
-                let unconstrained_rhs = self.next_term_infer_of_kind(pred.term);
-                let unconstrained_goal =
-                    goal.with(cx, ty::NormalizesTo { alias: pred.alias, term: unconstrained_rhs });
+                let unconstrained_rhs = self.next_term_infer_of_kind(pred.term.clone());
+                let unconstrained_goal = goal.with(
+                    cx,
+                    ty::NormalizesTo { alias: pred.alias.clone(), term: unconstrained_rhs.clone() },
+                );
 
                 let (
                     NestedNormalizationGoals(nested_goals),
@@ -696,9 +704,9 @@ where
                 // type contains an ambiguous alias referencing bound regions. We should
                 // consider changing this to only use "shallow structural equality".
                 self.eq_structurally_relating_aliases(
-                    goal.param_env,
-                    pred.term,
-                    unconstrained_rhs,
+                    goal.param_env.clone(),
+                    &pred.term,
+                    &unconstrained_rhs,
                 )?;
 
                 // We only look at the `projection_ty` part here rather than
@@ -748,7 +756,7 @@ where
     }
 
     /// Record impl args in the proof tree for later access by `InspectCandidate`.
-    pub(crate) fn record_impl_args(&mut self, impl_args: I::GenericArgs) {
+    pub(crate) fn record_impl_args(&mut self, impl_args: &I::GenericArgs) {
         self.inspect.record_impl_args(self.delegate, self.max_input_universe, impl_args)
     }
 
@@ -758,9 +766,12 @@ where
 
     #[instrument(level = "debug", skip(self))]
     pub(super) fn add_goal(&mut self, source: GoalSource, mut goal: Goal<I, I::Predicate>) {
-        goal.predicate =
-            goal.predicate.fold_with(&mut ReplaceAliasWithInfer::new(self, source, goal.param_env));
-        self.inspect.add_goal(self.delegate, self.max_input_universe, source, goal);
+        goal.predicate = goal.predicate.fold_with(&mut ReplaceAliasWithInfer::new(
+            self,
+            source,
+            goal.param_env.clone(),
+        ));
+        self.inspect.add_goal(self.delegate, self.max_input_universe, source, &goal);
         self.nested_goals.push((source, goal, None));
     }
 
@@ -777,19 +788,19 @@ where
 
     pub(super) fn next_region_var(&mut self) -> I::Region {
         let region = self.delegate.next_region_infer();
-        self.inspect.add_var_value(region);
+        self.inspect.add_var_value(region.clone());
         region
     }
 
     pub(super) fn next_ty_infer(&mut self) -> I::Ty {
         let ty = self.delegate.next_ty_infer();
-        self.inspect.add_var_value(ty);
+        self.inspect.add_var_value(ty.clone());
         ty
     }
 
     pub(super) fn next_const_infer(&mut self) -> I::Const {
         let ct = self.delegate.next_const_infer();
-        self.inspect.add_var_value(ct);
+        self.inspect.add_var_value(ct.clone());
         ct
     }
 
@@ -807,17 +818,17 @@ where
     /// This is the case if the `term` does not occur in any other part of the predicate
     /// and is able to name all other placeholder and inference variables.
     #[instrument(level = "trace", skip(self), ret)]
-    pub(super) fn term_is_fully_unconstrained(&self, goal: Goal<I, ty::NormalizesTo<I>>) -> bool {
-        let universe_of_term = match goal.predicate.term.kind() {
+    pub(super) fn term_is_fully_unconstrained(&self, goal: &Goal<I, ty::NormalizesTo<I>>) -> bool {
+        let universe_of_term = match goal.predicate.term.clone().kind() {
             ty::TermKind::Ty(ty) => {
-                if let ty::Infer(ty::TyVar(vid)) = ty.kind() {
+                if let ty::Infer(ty::TyVar(vid)) = *ty.kind() {
                     self.delegate.universe_of_ty(vid).unwrap()
                 } else {
                     return false;
                 }
             }
             ty::TermKind::Const(ct) => {
-                if let ty::ConstKind::Infer(ty::InferConst::Var(vid)) = ct.kind() {
+                if let ty::ConstKind::Infer(ty::InferConst::Var(vid)) = *ct.kind() {
                     self.delegate.universe_of_ct(vid).unwrap()
                 } else {
                     return false;
@@ -851,10 +862,10 @@ where
                     return ControlFlow::Continue(());
                 }
 
-                match t.kind() {
+                match *t.kind() {
                     ty::Infer(ty::TyVar(vid)) => {
-                        if let ty::TermKind::Ty(term) = self.term.kind()
-                            && let ty::Infer(ty::TyVar(term_vid)) = term.kind()
+                        if let ty::TermKind::Ty(term) = self.term.clone().kind()
+                            && let ty::Infer(ty::TyVar(term_vid)) = *term.kind()
                             && self.delegate.root_ty_var(vid) == self.delegate.root_ty_var(term_vid)
                         {
                             return ControlFlow::Break(());
@@ -875,10 +886,11 @@ where
             }
 
             fn visit_const(&mut self, c: I::Const) -> Self::Result {
-                match c.kind() {
+                match *c.kind() {
                     ty::ConstKind::Infer(ty::InferConst::Var(vid)) => {
-                        if let ty::TermKind::Const(term) = self.term.kind()
-                            && let ty::ConstKind::Infer(ty::InferConst::Var(term_vid)) = term.kind()
+                        if let ty::TermKind::Const(term) = self.term.clone().kind()
+                            && let ty::ConstKind::Infer(ty::InferConst::Var(term_vid)) =
+                                *term.kind()
                             && self.delegate.root_const_var(vid)
                                 == self.delegate.root_const_var(term_vid)
                         {
@@ -918,7 +930,7 @@ where
         let mut visitor = ContainsTermOrNotNameable {
             delegate: self.delegate,
             universe_of_term,
-            term: goal.predicate.term,
+            term: goal.predicate.term.clone(),
             cache: Default::default(),
         };
         goal.predicate.alias.visit_with(&mut visitor).is_continue()
@@ -930,7 +942,7 @@ where
     }
 
     #[instrument(level = "trace", skip(self, param_env), ret)]
-    pub(super) fn eq<T: Relate<I>>(
+    pub(super) fn eq<T: Relate<I> + Debug>(
         &mut self,
         param_env: I::ParamEnv,
         lhs: T,
@@ -948,7 +960,7 @@ where
     pub(super) fn relate_rigid_alias_non_alias(
         &mut self,
         param_env: I::ParamEnv,
-        alias: ty::AliasTerm<I>,
+        alias: &ty::AliasTerm<I>,
         variance: ty::Variance,
         term: I::Term,
     ) -> Result<(), NoSolution> {
@@ -966,15 +978,15 @@ where
             // variant to `StructurallyRelateAliases`.
             let identity_args = self.fresh_args_for_item(alias.def_id);
             let rigid_ctor = ty::AliasTerm::new_from_args(cx, alias.def_id, identity_args);
-            let ctor_term = rigid_ctor.to_term(cx);
+            let ctor_term = rigid_ctor.clone().to_term(cx);
             let obligations = self.delegate.eq_structurally_relating_aliases(
-                param_env,
-                term,
-                ctor_term,
+                param_env.clone(),
+                &term,
+                &ctor_term,
                 self.origin_span,
             )?;
             debug_assert!(obligations.is_empty());
-            self.relate(param_env, alias, variance, rigid_ctor)
+            self.relate(param_env, alias, variance, &rigid_ctor)
         } else {
             Err(NoSolution)
         }
@@ -984,7 +996,7 @@ where
     /// unconstrained "return value" or when we're sure that all aliases in
     /// the types are rigid.
     #[instrument(level = "trace", skip(self, param_env), ret)]
-    pub(super) fn eq_structurally_relating_aliases<T: Relate<I>>(
+    pub(super) fn eq_structurally_relating_aliases<T: Relate<I> + Debug>(
         &mut self,
         param_env: I::ParamEnv,
         lhs: T,
@@ -1001,7 +1013,7 @@ where
     }
 
     #[instrument(level = "trace", skip(self, param_env), ret)]
-    pub(super) fn sub<T: Relate<I>>(
+    pub(super) fn sub<T: Relate<I> + Debug>(
         &mut self,
         param_env: I::ParamEnv,
         sub: T,
@@ -1011,7 +1023,7 @@ where
     }
 
     #[instrument(level = "trace", skip(self, param_env), ret)]
-    pub(super) fn relate<T: Relate<I>>(
+    pub(super) fn relate<T: Relate<I> + Debug>(
         &mut self,
         param_env: I::ParamEnv,
         lhs: T,
@@ -1019,8 +1031,8 @@ where
         rhs: T,
     ) -> Result<(), NoSolution> {
         let goals = self.delegate.relate(param_env, lhs, variance, rhs, self.origin_span)?;
-        for &goal in goals.iter() {
-            let source = match goal.predicate.kind().skip_binder() {
+        for goal in goals.iter() {
+            let source = match goal.predicate.clone().kind().skip_binder_ref() {
                 ty::PredicateKind::Subtype { .. } | ty::PredicateKind::AliasRelate(..) => {
                     GoalSource::TypeRelating
                 }
@@ -1028,7 +1040,7 @@ where
                 ty::PredicateKind::Clause(ty::ClauseKind::WellFormed(_)) => GoalSource::Misc,
                 p => unreachable!("unexpected nested goal in `relate`: {p:?}"),
             };
-            self.add_goal(source, goal);
+            self.add_goal(source, goal.clone());
         }
         Ok(())
     }
@@ -1039,7 +1051,7 @@ where
     /// If possible, try using `eq` instead which automatically handles nested
     /// goals correctly.
     #[instrument(level = "trace", skip(self, param_env), ret)]
-    pub(super) fn eq_and_get_goals<T: Relate<I>>(
+    pub(super) fn eq_and_get_goals<T: Relate<I> + Debug>(
         &self,
         param_env: I::ParamEnv,
         lhs: T,
@@ -1048,7 +1060,7 @@ where
         Ok(self.delegate.relate(param_env, lhs, ty::Variance::Invariant, rhs, self.origin_span)?)
     }
 
-    pub(super) fn instantiate_binder_with_infer<T: TypeFoldable<I> + Copy>(
+    pub(super) fn instantiate_binder_with_infer<T: TypeFoldable<I>>(
         &self,
         value: ty::Binder<I, T>,
     ) -> T {
@@ -1077,7 +1089,7 @@ where
     }
 
     pub(super) fn eager_resolve_region(&self, r: I::Region) -> I::Region {
-        if let ty::ReVar(vid) = r.kind() {
+        if let ty::ReVar(vid) = *r.kind() {
             self.delegate.opportunistic_resolve_lt_var(vid)
         } else {
             r
@@ -1113,10 +1125,10 @@ where
     pub(super) fn trait_ref_is_knowable(
         &mut self,
         param_env: I::ParamEnv,
-        trait_ref: ty::TraitRef<I>,
+        trait_ref: &ty::TraitRef<I>,
     ) -> Result<bool, NoSolution> {
         let delegate = self.delegate;
-        let lazily_normalize_ty = |ty| self.structurally_normalize_ty(param_env, ty);
+        let lazily_normalize_ty = |ty| self.structurally_normalize_ty(param_env.clone(), ty);
         coherence::trait_ref_is_knowable(&**delegate, trait_ref, lazily_normalize_ty)
             .map(|is_knowable| is_knowable.is_ok())
     }
@@ -1163,7 +1175,7 @@ where
     pub(super) fn evaluate_const(
         &self,
         param_env: I::ParamEnv,
-        uv: ty::UnevaluatedConst<I>,
+        uv: &ty::UnevaluatedConst<I>,
     ) -> Option<I::Const> {
         self.delegate.evaluate_const(param_env, uv)
     }
@@ -1195,10 +1207,10 @@ where
 
     pub(crate) fn opaques_with_sub_unified_hidden_type(
         &self,
-        self_ty: I::Ty,
+        self_ty: &I::Ty,
     ) -> Vec<ty::AliasTy<I>> {
         if let ty::Infer(ty::TyVar(vid)) = self_ty.kind() {
-            self.delegate.opaques_with_sub_unified_hidden_type(vid)
+            self.delegate.opaques_with_sub_unified_hidden_type(*vid)
         } else {
             vec![]
         }
@@ -1290,12 +1302,13 @@ where
         let external_constraints =
             self.compute_external_query_constraints(certainty, normalization_nested_goals);
         let (var_values, mut external_constraints) =
-            eager_resolve_vars(self.delegate, (self.var_values, external_constraints));
+            eager_resolve_vars(self.delegate, (self.var_values.clone(), external_constraints));
 
         // Remove any trivial or duplicated region constraints once we've resolved regions
         let mut unique = HashSet::default();
         external_constraints.region_constraints.retain(|outlives| {
-            outlives.0.as_region().is_none_or(|re| re != outlives.1) && unique.insert(*outlives)
+            outlives.0.clone().into_region().is_none_or(|re| re != outlives.1)
+                && unique.insert(outlives.clone())
         });
 
         let canonical = canonicalize_response(
@@ -1323,7 +1336,7 @@ where
         response_no_constraints_raw(
             self.cx(),
             self.max_input_universe,
-            self.variables,
+            self.variables.clone(),
             Certainty::Maybe { cause, opaque_types_jank },
         )
     }
@@ -1427,23 +1440,23 @@ where
                 let infer_ty = self.ecx.next_ty_infer();
                 let normalizes_to = ty::PredicateKind::AliasRelate(
                     ty.into(),
-                    infer_ty.into(),
+                    infer_ty.clone().into(),
                     ty::AliasRelationDirection::Equate,
                 );
                 self.ecx.add_goal(
                     self.normalization_goal_source,
-                    Goal::new(self.cx(), self.param_env, normalizes_to),
+                    Goal::new(self.cx(), self.param_env.clone(), normalizes_to),
                 );
                 infer_ty
             }
             _ => {
                 if !ty.has_aliases() {
                     ty
-                } else if let Some(&entry) = self.cache.get(&ty) {
-                    return entry;
+                } else if let Some(entry) = self.cache.get(&ty) {
+                    return entry.clone();
                 } else {
-                    let res = ty.super_fold_with(self);
-                    assert!(self.cache.insert(ty, res).is_none());
+                    let res = ty.clone().super_fold_with(self);
+                    assert!(self.cache.insert(ty, res.clone()).is_none());
                     res
                 }
             }
@@ -1456,12 +1469,12 @@ where
                 let infer_ct = self.ecx.next_const_infer();
                 let normalizes_to = ty::PredicateKind::AliasRelate(
                     ct.into(),
-                    infer_ct.into(),
+                    infer_ct.clone().into(),
                     ty::AliasRelationDirection::Equate,
                 );
                 self.ecx.add_goal(
                     self.normalization_goal_source,
-                    Goal::new(self.cx(), self.param_env, normalizes_to),
+                    Goal::new(self.cx(), self.param_env.clone(), normalizes_to),
                 );
                 infer_ct
             }
@@ -1505,21 +1518,21 @@ pub(super) fn evaluate_root_goal_for_proof_tree<D: SolverDelegate<Interner = I>,
     let opaque_types = delegate.clone_opaque_types_lookup_table();
     let (goal, opaque_types) = eager_resolve_vars(delegate, (goal, opaque_types));
 
-    let (orig_values, canonical_goal) = canonicalize_goal(delegate, goal, &opaque_types);
+    let (orig_values, canonical_goal) = canonicalize_goal(delegate, goal.clone(), &opaque_types);
 
     let (canonical_result, final_revision) =
         delegate.cx().evaluate_root_goal_for_proof_tree_raw(canonical_goal);
 
     let proof_tree = inspect::GoalEvaluation {
-        uncanonicalized_goal: goal,
+        uncanonicalized_goal: goal.clone(),
         orig_values,
         final_revision,
-        result: canonical_result,
+        result: canonical_result.clone(),
     };
 
-    let response = match canonical_result {
-        Err(e) => return (Err(e), proof_tree),
-        Ok(response) => response,
+    let response = match &canonical_result {
+        Err(e) => return (Err(*e), proof_tree),
+        Ok(response) => response.clone(),
     };
 
     let (normalization_nested_goals, _certainty) = instantiate_and_apply_query_response(

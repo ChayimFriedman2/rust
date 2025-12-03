@@ -1,10 +1,12 @@
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
+use rustc_type_ir_macros::CopyWhereFields;
 
 use crate::Interner;
 
-#[derive_where(Clone, Copy, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, PartialEq, Debug; I: Interner)]
+#[derive(CopyWhereFields)]
 #[cfg_attr(
     feature = "nightly",
     derive(Decodable_NoContext, Encodable_NoContext, HashStable_NoContext)
@@ -17,7 +19,8 @@ pub enum GenericArgKind<I: Interner> {
 
 impl<I: Interner> Eq for GenericArgKind<I> {}
 
-#[derive_where(Clone, Copy, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, PartialEq, Debug; I: Interner)]
+#[derive(CopyWhereFields)]
 #[cfg_attr(
     feature = "nightly",
     derive(Decodable_NoContext, Encodable_NoContext, HashStable_NoContext)

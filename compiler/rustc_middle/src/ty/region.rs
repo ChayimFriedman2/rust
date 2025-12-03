@@ -16,11 +16,11 @@ pub type RegionKind<'tcx> = IrRegionKind<TyCtxt<'tcx>>;
 #[rustc_pass_by_value]
 pub struct Region<'tcx>(pub Interned<'tcx, RegionKind<'tcx>>);
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Region<'tcx> {
+impl<'tcx> rustc_type_ir::inherent::AsKind for Region<'tcx> {
     type Kind = RegionKind<'tcx>;
 
-    fn kind(self) -> RegionKind<'tcx> {
-        *self.0.0
+    fn kind(&self) -> &RegionKind<'tcx> {
+        self.0.0
     }
 }
 

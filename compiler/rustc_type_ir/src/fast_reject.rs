@@ -116,19 +116,19 @@ pub fn simplify_type<I: Interner>(
     ty: I::Ty,
     treat_params: TreatParams,
 ) -> Option<SimplifiedType<I::DefId>> {
-    match ty.kind() {
+    match *ty.kind() {
         ty::Bool => Some(SimplifiedType::Bool),
         ty::Char => Some(SimplifiedType::Char),
         ty::Int(int_type) => Some(SimplifiedType::Int(int_type)),
         ty::Uint(uint_type) => Some(SimplifiedType::Uint(uint_type)),
         ty::Float(float_type) => Some(SimplifiedType::Float(float_type)),
-        ty::Adt(def, _) => Some(SimplifiedType::Adt(def.def_id().into())),
+        ty::Adt(ref def, _) => Some(SimplifiedType::Adt(def.def_id().into())),
         ty::Str => Some(SimplifiedType::Str),
         ty::Array(..) => Some(SimplifiedType::Array),
         ty::Slice(..) => Some(SimplifiedType::Slice),
-        ty::Pat(ty, ..) => simplify_type(cx, ty, treat_params),
+        ty::Pat(ref ty, ..) => simplify_type(cx, ty.clone(), treat_params),
         ty::RawPtr(_, mutbl) => Some(SimplifiedType::Ptr(mutbl)),
-        ty::Dynamic(trait_info, ..) => match trait_info.principal_def_id() {
+        ty::Dynamic(ref trait_info, ..) => match trait_info.principal_def_id() {
             Some(principal_def_id) if !cx.trait_is_auto(principal_def_id) => {
                 Some(SimplifiedType::Trait(principal_def_id.into()))
             }
@@ -141,9 +141,9 @@ pub fn simplify_type<I: Interner>(
         ty::Coroutine(def_id, _) => Some(SimplifiedType::Coroutine(def_id.into())),
         ty::CoroutineWitness(def_id, _) => Some(SimplifiedType::CoroutineWitness(def_id.into())),
         ty::Never => Some(SimplifiedType::Never),
-        ty::Tuple(tys) => Some(SimplifiedType::Tuple(tys.len())),
-        ty::FnPtr(sig_tys, _hdr) => {
-            Some(SimplifiedType::Function(sig_tys.skip_binder().inputs().len()))
+        ty::Tuple(ref tys) => Some(SimplifiedType::Tuple(tys.len())),
+        ty::FnPtr(ref sig_tys, _hdr) => {
+            Some(SimplifiedType::Function(sig_tys.skip_binder_ref().inputs().len()))
         }
         ty::UnsafeBinder(_) => Some(SimplifiedType::UnsafeBinder),
         ty::Placeholder(..) => Some(SimplifiedType::Placeholder),
@@ -254,7 +254,7 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
         // recursively reachable via `types_may_unify_inner` which already
         // increments the depth for us.
         iter::zip(obligation_args.iter(), impl_args.iter()).all(|(obl, imp)| {
-            match (obl.kind(), imp.kind()) {
+            match (obl.clone().kind(), imp.clone().kind()) {
                 // We don't fast reject based on regions.
                 (ty::GenericArgKind::Lifetime(_), ty::GenericArgKind::Lifetime(_)) => true,
                 (ty::GenericArgKind::Type(obl), ty::GenericArgKind::Type(imp)) => {
@@ -273,7 +273,7 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
             return true;
         }
 
-        match rhs.kind() {
+        match *rhs.kind() {
             // Start by checking whether the `rhs` type may unify with
             // pretty much everything. Just return `true` in that case.
             ty::Param(_) => {
@@ -329,14 +329,16 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
         match lhs.kind() {
             ty::Ref(_, lhs_ty, lhs_mutbl) => match rhs.kind() {
                 ty::Ref(_, rhs_ty, rhs_mutbl) => {
-                    lhs_mutbl == rhs_mutbl && self.types_may_unify_inner(lhs_ty, rhs_ty, depth)
+                    lhs_mutbl == rhs_mutbl
+                        && self.types_may_unify_inner(lhs_ty.clone(), rhs_ty.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::Adt(lhs_def, lhs_args) => match rhs.kind() {
                 ty::Adt(rhs_def, rhs_args) => {
-                    lhs_def == rhs_def && self.args_may_unify_inner(lhs_args, rhs_args, depth)
+                    lhs_def == rhs_def
+                        && self.args_may_unify_inner(lhs_args.clone(), rhs_args.clone(), depth)
                 }
                 _ => false,
             },
@@ -356,7 +358,7 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
                 matches!(rhs.kind(), ty::Placeholder(rhs) if lhs == rhs)
             }
 
-            ty::Infer(var) => self.var_and_ty_may_unify(var, rhs),
+            ty::Infer(var) => self.var_and_ty_may_unify(*var, rhs),
 
             // As we're walking the whole type, it may encounter projections
             // inside of binders and what not, so we're just going to assume that
@@ -385,21 +387,22 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
 
             ty::Array(lhs_ty, lhs_len) => match rhs.kind() {
                 ty::Array(rhs_ty, rhs_len) => {
-                    self.types_may_unify_inner(lhs_ty, rhs_ty, depth)
-                        && self.consts_may_unify_inner(lhs_len, rhs_len)
+                    self.types_may_unify_inner(lhs_ty.clone(), rhs_ty.clone(), depth)
+                        && self.consts_may_unify_inner(lhs_len.clone(), rhs_len.clone())
                 }
                 _ => false,
             },
 
             ty::RawPtr(lhs_ty, lhs_mutbl) => match rhs.kind() {
                 ty::RawPtr(rhs_ty, rhs_mutbl) => {
-                    lhs_mutbl == rhs_mutbl && self.types_may_unify_inner(lhs_ty, rhs_ty, depth)
+                    lhs_mutbl == rhs_mutbl
+                        && self.types_may_unify_inner(lhs_ty.clone(), rhs_ty.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::Slice(lhs_ty) => {
-                matches!(rhs.kind(), ty::Slice(rhs_ty) if self.types_may_unify_inner(lhs_ty, rhs_ty, depth))
+                matches!(rhs.kind(), ty::Slice(rhs_ty) if self.types_may_unify_inner(lhs_ty.clone(), rhs_ty.clone(), depth))
             }
 
             ty::Dynamic(lhs_preds, ..) => {
@@ -413,8 +416,8 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
 
             ty::FnPtr(lhs_sig_tys, lhs_hdr) => match rhs.kind() {
                 ty::FnPtr(rhs_sig_tys, rhs_hdr) => {
-                    let lhs_sig_tys = lhs_sig_tys.skip_binder().inputs_and_output;
-                    let rhs_sig_tys = rhs_sig_tys.skip_binder().inputs_and_output;
+                    let lhs_sig_tys = &lhs_sig_tys.skip_binder_ref().inputs_and_output;
+                    let rhs_sig_tys = &rhs_sig_tys.skip_binder_ref().inputs_and_output;
 
                     lhs_hdr == rhs_hdr
                         && lhs_sig_tys.len() == rhs_sig_tys.len()
@@ -428,48 +431,54 @@ impl<I: Interner, const INSTANTIATE_LHS_WITH_INFER: bool, const INSTANTIATE_RHS_
 
             ty::FnDef(lhs_def_id, lhs_args) => match rhs.kind() {
                 ty::FnDef(rhs_def_id, rhs_args) => {
-                    lhs_def_id == rhs_def_id && self.args_may_unify_inner(lhs_args, rhs_args, depth)
+                    lhs_def_id == rhs_def_id
+                        && self.args_may_unify_inner(lhs_args.clone(), rhs_args.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::Closure(lhs_def_id, lhs_args) => match rhs.kind() {
                 ty::Closure(rhs_def_id, rhs_args) => {
-                    lhs_def_id == rhs_def_id && self.args_may_unify_inner(lhs_args, rhs_args, depth)
+                    lhs_def_id == rhs_def_id
+                        && self.args_may_unify_inner(lhs_args.clone(), rhs_args.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::CoroutineClosure(lhs_def_id, lhs_args) => match rhs.kind() {
                 ty::CoroutineClosure(rhs_def_id, rhs_args) => {
-                    lhs_def_id == rhs_def_id && self.args_may_unify_inner(lhs_args, rhs_args, depth)
+                    lhs_def_id == rhs_def_id
+                        && self.args_may_unify_inner(lhs_args.clone(), rhs_args.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::Coroutine(lhs_def_id, lhs_args) => match rhs.kind() {
                 ty::Coroutine(rhs_def_id, rhs_args) => {
-                    lhs_def_id == rhs_def_id && self.args_may_unify_inner(lhs_args, rhs_args, depth)
+                    lhs_def_id == rhs_def_id
+                        && self.args_may_unify_inner(lhs_args.clone(), rhs_args.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::CoroutineWitness(lhs_def_id, lhs_args) => match rhs.kind() {
                 ty::CoroutineWitness(rhs_def_id, rhs_args) => {
-                    lhs_def_id == rhs_def_id && self.args_may_unify_inner(lhs_args, rhs_args, depth)
+                    lhs_def_id == rhs_def_id
+                        && self.args_may_unify_inner(lhs_args.clone(), rhs_args.clone(), depth)
                 }
                 _ => false,
             },
 
             ty::Pat(lhs_ty, _) => {
                 // FIXME(pattern_types): take pattern into account
-                matches!(rhs.kind(), ty::Pat(rhs_ty, _) if self.types_may_unify_inner(lhs_ty, rhs_ty, depth))
+                matches!(rhs.kind(), ty::Pat(rhs_ty, _) if self.types_may_unify_inner(lhs_ty.clone(), rhs_ty.clone(), depth))
             }
 
             ty::UnsafeBinder(lhs_ty) => match rhs.kind() {
-                ty::UnsafeBinder(rhs_ty) => {
-                    self.types_may_unify(lhs_ty.skip_binder(), rhs_ty.skip_binder())
-                }
+                ty::UnsafeBinder(rhs_ty) => self.types_may_unify(
+                    lhs_ty.skip_binder_ref().clone(),
+                    rhs_ty.skip_binder_ref().clone(),
+                ),
                 _ => false,
             },
 

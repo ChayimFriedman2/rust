@@ -1079,12 +1079,12 @@ impl<'tcx> rustc_type_ir::inherent::Ty<TyCtxt<'tcx>> for Ty<'tcx> {
         Ty::new_tup_from_iter(interner, iter)
     }
 
-    fn tuple_fields(self) -> &'tcx ty::List<Ty<'tcx>> {
-        self.tuple_fields()
+    fn tuple_fields(&self) -> &'tcx ty::List<Ty<'tcx>> {
+        (*self).tuple_fields()
     }
 
-    fn to_opt_closure_kind(self) -> Option<ty::ClosureKind> {
-        self.to_opt_closure_kind()
+    fn to_opt_closure_kind(&self) -> Option<ty::ClosureKind> {
+        (*self).to_opt_closure_kind()
     }
 
     fn from_closure_kind(interner: TyCtxt<'tcx>, kind: ty::ClosureKind) -> Self {
@@ -1122,12 +1122,12 @@ impl<'tcx> rustc_type_ir::inherent::Ty<TyCtxt<'tcx>> for Ty<'tcx> {
         interner.types.usize
     }
 
-    fn discriminant_ty(self, interner: TyCtxt<'tcx>) -> Ty<'tcx> {
-        self.discriminant_ty(interner)
+    fn discriminant_ty(&self, interner: TyCtxt<'tcx>) -> Ty<'tcx> {
+        (*self).discriminant_ty(interner)
     }
 
-    fn has_unsafe_fields(self) -> bool {
-        Ty::has_unsafe_fields(self)
+    fn has_unsafe_fields(&self) -> bool {
+        Ty::has_unsafe_fields(*self)
     }
 }
 
@@ -2109,11 +2109,11 @@ impl<'tcx> Ty<'tcx> {
 }
 
 impl<'tcx> rustc_type_ir::inherent::Tys<TyCtxt<'tcx>> for &'tcx ty::List<Ty<'tcx>> {
-    fn inputs(self) -> &'tcx [Ty<'tcx>] {
+    fn inputs(&self) -> &'tcx [Ty<'tcx>] {
         self.split_last().unwrap().1
     }
 
-    fn output(self) -> Ty<'tcx> {
+    fn output(&self) -> Ty<'tcx> {
         *self.split_last().unwrap().0
     }
 }

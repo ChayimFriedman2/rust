@@ -56,8 +56,8 @@ impl<I: Interner> Iterator for TypeWalker<I> {
         loop {
             let next = self.stack.pop()?;
             self.last_subtree = self.stack.len();
-            if self.visited.insert(next) {
-                push_inner::<I>(&mut self.stack, next);
+            if self.visited.insert(next.clone()) {
+                push_inner::<I>(&mut self.stack, next.clone());
                 debug!("next: stack={:?}", self.stack);
                 return Some(next);
             }
@@ -89,35 +89,37 @@ fn push_inner<I: Interner>(stack: &mut TypeWalkerStack<I>, parent: I::GenericArg
             | ty::Foreign(..) => {}
 
             ty::Pat(ty, pat) => {
-                push_ty_pat::<I>(stack, pat);
-                stack.push(ty.into());
+                push_ty_pat::<I>(stack, pat.clone());
+                stack.push(ty.clone().into());
             }
             ty::Array(ty, len) => {
-                stack.push(len.into());
-                stack.push(ty.into());
+                stack.push(len.clone().into());
+                stack.push(ty.clone().into());
             }
             ty::Slice(ty) => {
-                stack.push(ty.into());
+                stack.push(ty.clone().into());
             }
             ty::RawPtr(ty, _) => {
-                stack.push(ty.into());
+                stack.push(ty.clone().into());
             }
             ty::Ref(lt, ty, _) => {
-                stack.push(ty.into());
-                stack.push(lt.into());
+                stack.push(ty.clone().into());
+                stack.push(lt.clone().into());
             }
             ty::Alias(_, data) => {
                 stack.extend(data.args.iter().rev());
             }
             ty::Dynamic(obj, lt) => {
-                stack.push(lt.into());
+                stack.push(lt.clone().into());
                 stack.extend(
-                    obj.iter()
+                    obj.iter_ref()
                         .rev()
                         .filter_map(|predicate| {
-                            let (args, opt_ty) = match predicate.skip_binder() {
-                                ty::ExistentialPredicate::Trait(tr) => (tr.args, None),
-                                ty::ExistentialPredicate::Projection(p) => (p.args, Some(p.term)),
+                            let (args, opt_ty) = match predicate.skip_binder_ref() {
+                                ty::ExistentialPredicate::Trait(tr) => (&tr.args, None),
+                                ty::ExistentialPredicate::Projection(p) => {
+                                    (&p.args, Some(p.term.clone()))
+                                }
                                 ty::ExistentialPredicate::AutoTrait(_) => {
                                     return None;
                                 }
@@ -142,11 +144,11 @@ fn push_inner<I: Interner>(stack: &mut TypeWalkerStack<I>, parent: I::GenericArg
             ty::Tuple(ts) => stack.extend(ts.iter().rev().map(|ty| ty.into())),
             ty::FnPtr(sig_tys, _hdr) => {
                 stack.extend(
-                    sig_tys.skip_binder().inputs_and_output.iter().rev().map(|ty| ty.into()),
+                    sig_tys.skip_binder_ref().inputs_and_output.iter().rev().map(|ty| ty.into()),
                 );
             }
             ty::UnsafeBinder(bound_ty) => {
-                stack.push(bound_ty.skip_binder().into());
+                stack.push(bound_ty.skip_binder_ref().clone().into());
             }
         },
         ty::GenericArgKind::Lifetime(_) => {}
@@ -170,8 +172,8 @@ fn push_inner<I: Interner>(stack: &mut TypeWalkerStack<I>, parent: I::GenericArg
 fn push_ty_pat<I: Interner>(stack: &mut TypeWalkerStack<I>, pat: I::Pat) {
     match pat.kind() {
         ty::PatternKind::Range { start, end } => {
-            stack.push(end.into());
-            stack.push(start.into());
+            stack.push(end.clone().into());
+            stack.push(start.clone().into());
         }
         ty::PatternKind::Or(pats) => {
             for pat in pats.iter() {

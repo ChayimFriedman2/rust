@@ -12,7 +12,8 @@ use rustc_infer::infer::outlives::env::OutlivesEnvironment;
 use rustc_macros::LintDiagnostic;
 use rustc_middle::middle::resolve_bound_vars::ResolvedArg;
 use rustc_middle::ty::relate::{
-    Relate, RelateResult, TypeRelation, structurally_relate_consts, structurally_relate_tys,
+    Relate, RelateRef, RelateResult, TypeRelation, structurally_relate_consts,
+    structurally_relate_tys,
 };
 use rustc_middle::ty::{
     self, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor,
@@ -508,12 +509,12 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for FunctionalVariances<'tcx> {
         _: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         let old_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
-        self.relate(a, b).unwrap();
+        self.relate(a.clone(), b).unwrap();
         self.ambient_variance = old_variance;
-        Ok(a)
+        Ok(a.into_relate_result())
     }
 
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
@@ -558,14 +559,14 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for FunctionalVariances<'tcx> {
 
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        b: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        b: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
-        self.relate(a.skip_binder(), b.skip_binder()).unwrap();
-        Ok(a)
+        self.relate(a.skip_binder_ref(), b.skip_binder_ref()).unwrap();
+        Ok(a.clone())
     }
 }
 

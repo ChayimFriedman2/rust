@@ -22,8 +22,8 @@ impl<'tcx> rustc_type_ir::InferCtxtLike for InferCtxt<'tcx> {
         self.next_trait_solver
     }
 
-    fn typing_mode(&self) -> ty::TypingMode<'tcx> {
-        self.typing_mode()
+    fn typing_mode(&self) -> &ty::TypingMode<'tcx> {
+        &self.typing_mode
     }
 
     fn universe(&self) -> ty::UniverseIndex {
@@ -160,7 +160,7 @@ impl<'tcx> rustc_type_ir::InferCtxtLike for InferCtxt<'tcx> {
         self.fresh_args_for_item(DUMMY_SP, def_id)
     }
 
-    fn instantiate_binder_with_infer<T: TypeFoldable<TyCtxt<'tcx>> + Copy>(
+    fn instantiate_binder_with_infer<T: TypeFoldable<TyCtxt<'tcx>>>(
         &self,
         value: ty::Binder<'tcx, T>,
     ) -> T {

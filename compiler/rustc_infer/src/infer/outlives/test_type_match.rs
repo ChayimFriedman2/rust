@@ -3,6 +3,7 @@ use std::collections::hash_map::Entry;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::ty::error::TypeError;
 use rustc_middle::ty::{self, Ty, TyCtxt, TypeVisitableExt};
+use rustc_type_ir::relate::RelateRef;
 use tracing::instrument;
 
 use crate::infer::region_constraints::VerifyIfEq;
@@ -144,10 +145,10 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
         _: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         // Opaque types args have lifetime parameters.
         // We must not check them to be equal, as we never insert anything to make them so.
-        if variance != ty::Bivariant { self.relate(a, b) } else { Ok(a) }
+        if variance != ty::Bivariant { self.relate(a, b) } else { Ok(a.into_relate_result()) }
     }
 
     #[instrument(skip(self), level = "trace")]
@@ -196,14 +197,15 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
     #[instrument(skip(self), level = "trace")]
     fn binders<T>(
         &mut self,
-        pattern: ty::Binder<'tcx, T>,
-        value: ty::Binder<'tcx, T>,
+        pattern: &ty::Binder<'tcx, T>,
+        value: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
         self.pattern_depth.shift_in(1);
-        let result = Ok(pattern.rebind(self.relate(pattern.skip_binder(), value.skip_binder())?));
+        let result =
+            Ok(pattern.rebind(self.relate(pattern.skip_binder_ref(), value.skip_binder_ref())?));
         self.pattern_depth.shift_out(1);
         result
     }

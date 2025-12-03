@@ -195,7 +195,7 @@ where
         param_env: ty::ParamEnv<'tcx>,
         expected: T,
         actual: T,
-    ) -> Result<T, TypeError<'tcx>> {
+    ) -> Result<T::RelateResult, TypeError<'tcx>> {
         self.infcx
             .at(cause, param_env)
             .lub(expected, actual)

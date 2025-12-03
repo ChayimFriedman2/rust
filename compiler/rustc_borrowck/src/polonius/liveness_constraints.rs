@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use rustc_index::bit_set::SparseBitMatrix;
 use rustc_middle::mir::{Body, Location};
-use rustc_middle::ty::relate::{self, Relate, RelateResult, TypeRelation};
+use rustc_middle::ty::relate::{self, Relate, RelateRef, RelateResult, TypeRelation};
 use rustc_middle::ty::{self, RegionVid, Ty, TyCtxt, TypeVisitable};
 use rustc_mir_dataflow::points::PointIndex;
 
@@ -19,7 +19,7 @@ impl PoloniusLivenessContext {
         &mut self,
         tcx: TyCtxt<'tcx>,
         universal_regions: &UniversalRegions<'tcx>,
-        value: impl TypeVisitable<TyCtxt<'tcx>> + Relate<TyCtxt<'tcx>>,
+        value: impl TypeVisitable<TyCtxt<'tcx>> + Relate<TyCtxt<'tcx>> + Copy,
     ) {
         let mut extractor = VarianceExtractor {
             tcx,
@@ -262,7 +262,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for VarianceExtractor<'_, 'tcx> {
         _info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         let r = self.relate(a, b)?;
@@ -296,13 +296,13 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for VarianceExtractor<'_, 'tcx> {
 
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        _: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        _: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
-        self.relate(a.skip_binder(), a.skip_binder())?;
-        Ok(a)
+        self.relate(a.skip_binder_ref(), a.skip_binder_ref())?;
+        Ok(a.clone())
     }
 }

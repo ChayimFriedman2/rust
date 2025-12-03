@@ -5,6 +5,7 @@ use rustc_middle::ty::relate::{
 };
 use rustc_middle::ty::{self, DelayedSet, Ty, TyCtxt, TyVar};
 use rustc_span::Span;
+use rustc_type_ir::relate::RelateRef;
 use tracing::{debug, instrument};
 
 use crate::infer::BoundRegionConversionTime::HigherRankedType;
@@ -103,12 +104,16 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for TypeRelating<'_, 'tcx> {
         _info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         debug!(?self.ambient_variance, "new ambient variance");
 
-        let r = if self.ambient_variance == ty::Bivariant { Ok(a) } else { self.relate(a, b) };
+        let r = if self.ambient_variance == ty::Bivariant {
+            Ok(a.into_relate_result())
+        } else {
+            self.relate(a, b)
+        };
 
         self.ambient_variance = old_ambient_variance;
         r
@@ -261,16 +266,16 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for TypeRelating<'_, 'tcx> {
 
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        b: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        b: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
         if a == b {
             // Do nothing
-        } else if let Some(a) = a.no_bound_vars()
-            && let Some(b) = b.no_bound_vars()
+        } else if let Some(a) = a.no_bound_vars_ref()
+            && let Some(b) = b.no_bound_vars_ref()
         {
             self.relate(a, b)?;
         } else {
@@ -294,15 +299,23 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for TypeRelating<'_, 'tcx> {
                 //
                 // [rd]: https://rustc-dev-guide.rust-lang.org/borrow_check/region_inference/placeholders_and_universes.html
                 ty::Covariant => {
-                    infcx.enter_forall(b, |b| {
-                        let a = infcx.instantiate_binder_with_fresh_vars(span, HigherRankedType, a);
-                        self.relate(a, b)
+                    infcx.enter_forall(b.clone(), |b| {
+                        let a = infcx.instantiate_binder_with_fresh_vars(
+                            span,
+                            HigherRankedType,
+                            a.clone(),
+                        );
+                        self.relate(&a, &b)
                     })?;
                 }
                 ty::Contravariant => {
-                    infcx.enter_forall(a, |a| {
-                        let b = infcx.instantiate_binder_with_fresh_vars(span, HigherRankedType, b);
-                        self.relate(a, b)
+                    infcx.enter_forall(a.clone(), |a| {
+                        let b = infcx.instantiate_binder_with_fresh_vars(
+                            span,
+                            HigherRankedType,
+                            b.clone(),
+                        );
+                        self.relate(&a, &b)
                     })?;
                 }
 
@@ -317,15 +330,23 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for TypeRelating<'_, 'tcx> {
                 // `exists<..> A == for<..> B` and `exists<..> B == for<..> A`.
                 // Check if `exists<..> A == for<..> B`
                 ty::Invariant => {
-                    infcx.enter_forall(b, |b| {
-                        let a = infcx.instantiate_binder_with_fresh_vars(span, HigherRankedType, a);
-                        self.relate(a, b)
+                    infcx.enter_forall(b.clone(), |b| {
+                        let a = infcx.instantiate_binder_with_fresh_vars(
+                            span,
+                            HigherRankedType,
+                            a.clone(),
+                        );
+                        self.relate(&a, &b)
                     })?;
 
                     // Check if `exists<..> B == for<..> A`.
-                    infcx.enter_forall(a, |a| {
-                        let b = infcx.instantiate_binder_with_fresh_vars(span, HigherRankedType, b);
-                        self.relate(a, b)
+                    infcx.enter_forall(a.clone(), |a| {
+                        let b = infcx.instantiate_binder_with_fresh_vars(
+                            span,
+                            HigherRankedType,
+                            b.clone(),
+                        );
+                        self.relate(&a, &b)
                     })?;
                 }
                 ty::Bivariant => {
@@ -334,7 +355,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for TypeRelating<'_, 'tcx> {
             }
         }
 
-        Ok(a)
+        Ok(a.clone())
     }
 }
 

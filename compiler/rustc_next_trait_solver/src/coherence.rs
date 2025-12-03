@@ -46,7 +46,7 @@ pub enum Conflict {
 #[instrument(level = "debug", skip(infcx, lazily_normalize_ty), ret)]
 pub fn trait_ref_is_knowable<Infcx, I, E>(
     infcx: &Infcx,
-    trait_ref: ty::TraitRef<I>,
+    trait_ref: &ty::TraitRef<I>,
     mut lazily_normalize_ty: impl FnMut(I::Ty) -> Result<I::Ty, E>,
 ) -> Result<Result<(), Conflict>, E>
 where
@@ -92,7 +92,7 @@ where
     }
 }
 
-pub fn trait_ref_is_local_or_fundamental<I: Interner>(tcx: I, trait_ref: ty::TraitRef<I>) -> bool {
+pub fn trait_ref_is_local_or_fundamental<I: Interner>(tcx: I, trait_ref: &ty::TraitRef<I>) -> bool {
     trait_ref.def_id.is_local() || tcx.trait_is_fundamental(trait_ref.def_id)
 }
 
@@ -220,7 +220,7 @@ pub struct UncoveredTyParams<I: Interner, T> {
 #[instrument(level = "trace", skip(infcx, lazily_normalize_ty), ret)]
 pub fn orphan_check_trait_ref<Infcx, I, E: Debug>(
     infcx: &Infcx,
-    trait_ref: ty::TraitRef<I>,
+    trait_ref: &ty::TraitRef<I>,
     in_crate: InCrate,
     lazily_normalize_ty: impl FnMut(I::Ty) -> Result<I::Ty, E>,
 ) -> Result<Result<(), OrphanCheckErr<I, I::Ty>>, E>
@@ -323,7 +323,7 @@ where
 
     fn visit_ty(&mut self, ty: I::Ty) -> Self::Result {
         let ty = self.infcx.shallow_resolve(ty);
-        let ty = match (self.lazily_normalize_ty)(ty) {
+        let ty = match (self.lazily_normalize_ty)(ty.clone()) {
             Ok(norm_ty) if norm_ty.is_ty_var() => ty,
             Ok(norm_ty) => norm_ty,
             Err(err) => return ControlFlow::Break(OrphanCheckEarlyExit::NormalizationFailure(err)),
@@ -418,7 +418,7 @@ where
                 }
             }
             ty::Foreign(def_id) => {
-                if self.def_id_is_local(def_id) {
+                if self.def_id_is_local(*def_id) {
                     ControlFlow::Break(OrphanCheckEarlyExit::LocalTy(ty))
                 } else {
                     self.found_non_local_ty(ty)

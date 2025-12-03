@@ -105,7 +105,7 @@ pub trait TypeVisitor<I: Interner>: Sized {
     // The default region visitor is a no-op because `Region` is non-recursive
     // and has no `super_visit_with` method to call.
     fn visit_region(&mut self, r: I::Region) -> Self::Result {
-        if let ty::ReError(guar) = r.kind() {
+        if let ty::ReError(guar) = *r.kind() {
             self.visit_error(guar)
         } else {
             Self::Result::output()
@@ -200,13 +200,21 @@ impl<I: Interner, T: TypeVisitable<I>, const N: usize> TypeVisitable<I> for Smal
     }
 }
 
-// `TypeFoldable` isn't impl'd for `&[T]`. It doesn't make sense in the general
+// `TypeFoldable` isn't impl'd for `[T]`. It doesn't make sense in the general
 // case, because we can't return a new slice. But note that there are a couple
 // of trivial impls of `TypeFoldable` for specific slice types elsewhere.
-impl<I: Interner, T: TypeVisitable<I>> TypeVisitable<I> for &[T] {
+impl<I: Interner, T: TypeVisitable<I>> TypeVisitable<I> for [T] {
     fn visit_with<V: TypeVisitor<I>>(&self, visitor: &mut V) -> V::Result {
         walk_visitable_list!(visitor, self.iter());
         V::Result::output()
+    }
+}
+
+// `TypeFoldable` isn't impl'd for `&T`. It doesn't make sense in the general
+// case, because we can't return a new reference.
+impl<I: Interner, T: TypeVisitable<I> + ?Sized> TypeVisitable<I> for &T {
+    fn visit_with<V: TypeVisitor<I>>(&self, visitor: &mut V) -> V::Result {
+        T::visit_with(&**self, visitor)
     }
 }
 

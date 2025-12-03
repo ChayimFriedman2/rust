@@ -432,7 +432,8 @@ impl<'tcx> InferCtxt<'tcx> {
         let mut opt_values: IndexVec<BoundVar, Option<GenericArg<'tcx>>> =
             IndexVec::from_elem_n(None, query_response.variables.len());
 
-        for (original_value, result_value) in iter::zip(&original_values.var_values, result_values)
+        for (original_value, result_value) in
+            iter::zip(&original_values.var_values, result_values.iter())
         {
             match result_value.kind() {
                 GenericArgKind::Type(result_value) => {

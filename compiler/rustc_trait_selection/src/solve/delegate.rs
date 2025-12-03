@@ -60,7 +60,7 @@ impl<'tcx> rustc_next_trait_solver::delegate::SolverDelegate for SolverDelegate<
 
     fn compute_goal_fast_path(
         &self,
-        goal: Goal<'tcx, ty::Predicate<'tcx>>,
+        goal: &Goal<'tcx, ty::Predicate<'tcx>>,
         span: Span,
     ) -> Option<Certainty> {
         if let Some(trait_pred) = goal.predicate.as_trait_clause() {
@@ -157,7 +157,7 @@ impl<'tcx> rustc_next_trait_solver::delegate::SolverDelegate for SolverDelegate<
 
     fn fresh_var_for_kind_with_span(
         &self,
-        arg: ty::GenericArg<'tcx>,
+        arg: &ty::GenericArg<'tcx>,
         span: Span,
     ) -> ty::GenericArg<'tcx> {
         match arg.kind() {
@@ -176,9 +176,9 @@ impl<'tcx> rustc_next_trait_solver::delegate::SolverDelegate for SolverDelegate<
     fn evaluate_const(
         &self,
         param_env: ty::ParamEnv<'tcx>,
-        uv: ty::UnevaluatedConst<'tcx>,
+        uv: &ty::UnevaluatedConst<'tcx>,
     ) -> Option<ty::Const<'tcx>> {
-        let ct = ty::Const::new_unevaluated(self.tcx, uv);
+        let ct = ty::Const::new_unevaluated(self.tcx, *uv);
 
         match crate::traits::try_evaluate_const(&self.0, ct, param_env) {
             Ok(ct) => Some(ct),

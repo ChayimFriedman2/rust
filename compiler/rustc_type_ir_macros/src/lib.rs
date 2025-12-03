@@ -12,6 +12,11 @@ decl_derive!(
 decl_derive!(
     [Lift_Generic] => lift_derive
 );
+decl_derive!(
+    [CopyWhereFields] =>
+    /// A derive for `Copy`, but a perfect derive - bounds based on field types and not generic params.
+    copy_where_fields_derive
+);
 
 fn has_ignore_attr(attrs: &[Attribute], name: &'static str, meta: &'static str) -> bool {
     let mut ignored = false;
@@ -210,4 +215,10 @@ fn lift(mut ty: syn::Type) -> syn::Type {
     ItoJ.visit_type_mut(&mut ty);
 
     ty
+}
+
+fn copy_where_fields_derive(mut s: synstructure::Structure<'_>) -> proc_macro2::TokenStream {
+    s.add_bounds(synstructure::AddBounds::Fields);
+
+    s.bound_impl(quote!(::core::marker::Copy), quote! {})
 }

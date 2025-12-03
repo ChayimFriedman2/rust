@@ -16,23 +16,23 @@ where
 {
     pub(super) fn normalize_free_alias(
         &mut self,
-        goal: Goal<I, ty::NormalizesTo<I>>,
+        goal: &Goal<I, ty::NormalizesTo<I>>,
     ) -> QueryResult<I> {
         let cx = self.cx();
-        let free_alias = goal.predicate.alias;
+        let free_alias = &goal.predicate.alias;
 
         // Check where clauses
         self.add_goals(
             GoalSource::Misc,
             cx.predicates_of(free_alias.def_id)
-                .iter_instantiated(cx, free_alias.args)
+                .iter_instantiated(cx, free_alias.args.clone())
                 .map(|pred| goal.with(cx, pred)),
         );
 
         let actual = if free_alias.kind(cx).is_type() {
-            cx.type_of(free_alias.def_id).instantiate(cx, free_alias.args).into()
+            cx.type_of(free_alias.def_id).instantiate(cx, &free_alias.args).into()
         } else {
-            cx.const_of_item(free_alias.def_id).instantiate(cx, free_alias.args).into()
+            cx.const_of_item(free_alias.def_id).instantiate(cx, &free_alias.args).into()
         };
 
         self.instantiate_normalizes_to_term(goal, actual);

@@ -1,6 +1,7 @@
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
+use rustc_type_ir_macros::CopyWhereFields;
 
 use crate::fold::TypeFoldable;
 use crate::inherent::*;
@@ -18,7 +19,8 @@ use crate::{self as ty, Interner, TyVid};
 ///
 /// If neither of these functions are available, feel free to reach out to
 /// t-types for help.
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
+#[derive(CopyWhereFields)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -148,7 +150,7 @@ pub trait InferCtxtLike: Sized {
         true
     }
 
-    fn typing_mode(&self) -> TypingMode<Self::Interner>;
+    fn typing_mode(&self) -> &TypingMode<Self::Interner>;
 
     fn universe(&self) -> ty::UniverseIndex;
     fn create_next_universe(&self) -> ty::UniverseIndex;
@@ -186,7 +188,7 @@ pub trait InferCtxtLike: Sized {
         def_id: <Self::Interner as Interner>::DefId,
     ) -> <Self::Interner as Interner>::GenericArgs;
 
-    fn instantiate_binder_with_infer<T: TypeFoldable<Self::Interner> + Copy>(
+    fn instantiate_binder_with_infer<T: TypeFoldable<Self::Interner>>(
         &self,
         value: ty::Binder<Self::Interner, T>,
     ) -> T;
@@ -300,7 +302,7 @@ where
     // Iterate through all goals in param_env to find the one that has the same symbol.
     for pred in param_env.caller_bounds().iter() {
         if let ty::ClauseKind::UnstableFeature(sym) = pred.kind().skip_binder() {
-            if sym == symbol {
+            if *sym == symbol {
                 return true;
             }
         }
@@ -322,6 +324,6 @@ where
     // Note: `feature_bound_holds_in_crate` does not consider a feature to be enabled
     // if we are in std/core even if there is a corresponding `feature` attribute on the crate.
 
-    (infcx.typing_mode() == TypingMode::PostAnalysis)
+    (*infcx.typing_mode() == TypingMode::PostAnalysis)
         || infcx.cx().features().feature_bound_holds_in_crate(symbol)
 }

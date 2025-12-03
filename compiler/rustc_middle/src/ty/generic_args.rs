@@ -42,24 +42,24 @@ impl<'tcx> rustc_type_ir::inherent::GenericArg<TyCtxt<'tcx>> for GenericArg<'tcx
 
 impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArgsRef<'tcx> {
     fn rebase_onto(
-        self,
+        &self,
         tcx: TyCtxt<'tcx>,
         source_ancestor: DefId,
-        target_args: GenericArgsRef<'tcx>,
+        target_args: &GenericArgsRef<'tcx>,
     ) -> GenericArgsRef<'tcx> {
-        self.rebase_onto(tcx, source_ancestor, target_args)
+        (*self).rebase_onto(tcx, source_ancestor, *target_args)
     }
 
-    fn type_at(self, i: usize) -> Ty<'tcx> {
-        self.type_at(i)
+    fn type_at(&self, i: usize) -> Ty<'tcx> {
+        (*self).type_at(i)
     }
 
-    fn region_at(self, i: usize) -> ty::Region<'tcx> {
-        self.region_at(i)
+    fn region_at(&self, i: usize) -> ty::Region<'tcx> {
+        (*self).region_at(i)
     }
 
-    fn const_at(self, i: usize) -> ty::Const<'tcx> {
-        self.const_at(i)
+    fn const_at(&self, i: usize) -> ty::Const<'tcx> {
+        (*self).const_at(i)
     }
 
     fn identity_for_item(tcx: TyCtxt<'tcx>, def_id: DefId) -> ty::GenericArgsRef<'tcx> {
@@ -74,7 +74,7 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
         ty::GenericArgs::extend_with_error(tcx, def_id, original_args)
     }
 
-    fn split_closure_args(self) -> ty::ClosureArgsParts<TyCtxt<'tcx>> {
+    fn split_closure_args(&self) -> ty::ClosureArgsParts<'_, TyCtxt<'tcx>> {
         match self[..] {
             [ref parent_args @ .., closure_kind_ty, closure_sig_as_fn_ptr_ty, tupled_upvars_ty] => {
                 ty::ClosureArgsParts {
@@ -88,7 +88,7 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
         }
     }
 
-    fn split_coroutine_closure_args(self) -> ty::CoroutineClosureArgsParts<TyCtxt<'tcx>> {
+    fn split_coroutine_closure_args(&self) -> ty::CoroutineClosureArgsParts<'_, TyCtxt<'tcx>> {
         match self[..] {
             [
                 ref parent_args @ ..,
@@ -107,7 +107,7 @@ impl<'tcx> rustc_type_ir::inherent::GenericArgs<TyCtxt<'tcx>> for ty::GenericArg
         }
     }
 
-    fn split_coroutine_args(self) -> ty::CoroutineArgsParts<TyCtxt<'tcx>> {
+    fn split_coroutine_args(&self) -> ty::CoroutineArgsParts<'_, TyCtxt<'tcx>> {
         match self[..] {
             [ref parent_args @ .., kind_ty, resume_ty, yield_ty, return_ty, tupled_upvars_ty] => {
                 ty::CoroutineArgsParts {

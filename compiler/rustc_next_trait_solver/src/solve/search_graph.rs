@@ -29,7 +29,7 @@ where
     type ValidationScope = Infallible;
     fn enter_validation_scope(
         _cx: Self::Cx,
-        _input: CanonicalInput<I>,
+        _input: &CanonicalInput<I>,
     ) -> Option<Self::ValidationScope> {
         None
     }
@@ -46,7 +46,7 @@ where
     fn initial_provisional_result(
         cx: I,
         kind: PathKind,
-        input: CanonicalInput<I>,
+        input: &CanonicalInput<I>,
     ) -> QueryResult<I> {
         match kind {
             PathKind::Coinductive => response_no_constraints(cx, input, Certainty::Yes),
@@ -74,7 +74,7 @@ where
         }
     }
 
-    fn is_initial_provisional_result(result: QueryResult<I>) -> Option<PathKind> {
+    fn is_initial_provisional_result(result: &QueryResult<I>) -> Option<PathKind> {
         match result {
             Ok(response) => {
                 if has_no_inference_or_external_constraints(response) {
@@ -91,16 +91,16 @@ where
         }
     }
 
-    fn stack_overflow_result(cx: I, input: CanonicalInput<I>) -> QueryResult<I> {
+    fn stack_overflow_result(cx: I, input: &CanonicalInput<I>) -> QueryResult<I> {
         response_no_constraints(cx, input, Certainty::overflow(true))
     }
 
-    fn fixpoint_overflow_result(cx: I, input: CanonicalInput<I>) -> QueryResult<I> {
+    fn fixpoint_overflow_result(cx: I, input: &CanonicalInput<I>) -> QueryResult<I> {
         response_no_constraints(cx, input, Certainty::overflow(false))
     }
 
-    fn is_ambiguous_result(result: QueryResult<I>) -> Option<Certainty> {
-        result.ok().and_then(|response| {
+    fn is_ambiguous_result(result: &QueryResult<I>) -> Option<Certainty> {
+        result.as_ref().ok().and_then(|response| {
             if has_no_inference_or_external_constraints(response)
                 && matches!(response.value.certainty, Certainty::Maybe { .. })
             {
@@ -113,7 +113,7 @@ where
 
     fn propagate_ambiguity(
         cx: I,
-        for_input: CanonicalInput<I>,
+        for_input: &CanonicalInput<I>,
         certainty: Certainty,
     ) -> QueryResult<I> {
         response_no_constraints(cx, for_input, certainty)
@@ -122,13 +122,13 @@ where
     fn compute_goal(
         search_graph: &mut SearchGraph<D>,
         cx: I,
-        input: CanonicalInput<I>,
+        input: &CanonicalInput<I>,
         inspect: &mut Self::ProofTreeBuilder,
     ) -> QueryResult<I> {
         ensure_sufficient_stack(|| {
             EvalCtxt::enter_canonical(cx, search_graph, input, inspect, |ecx, goal| {
                 let result = ecx.compute_goal(goal);
-                ecx.inspect.query_result(result);
+                ecx.inspect.query_result(&result);
                 result
             })
         })
@@ -137,13 +137,13 @@ where
 
 fn response_no_constraints<I: Interner>(
     cx: I,
-    input: CanonicalInput<I>,
+    input: &CanonicalInput<I>,
     certainty: Certainty,
 ) -> QueryResult<I> {
     Ok(response_no_constraints_raw(
         cx,
         input.canonical.max_universe,
-        input.canonical.variables,
+        input.canonical.variables.clone(),
         certainty,
     ))
 }

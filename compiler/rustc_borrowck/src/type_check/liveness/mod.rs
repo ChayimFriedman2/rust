@@ -198,7 +198,7 @@ impl<'a, 'tcx> LiveVariablesVisitor<'a, 'tcx> {
     /// all regions appearing in the type of `value` must be live at `location`.
     fn record_regions_live_at<T>(&mut self, value: T, location: Location)
     where
-        T: TypeVisitable<TyCtxt<'tcx>> + Relate<TyCtxt<'tcx>>,
+        T: TypeVisitable<TyCtxt<'tcx>> + Relate<TyCtxt<'tcx>> + Copy,
     {
         debug!("record_regions_live_at(value={:?}, location={:?})", value, location);
         self.tcx.for_each_free_region(&value, |live_region| {

@@ -9,6 +9,7 @@ use rustc_infer::traits::solve::Goal;
 use rustc_middle::mir::ConstraintCategory;
 use rustc_middle::traits::ObligationCause;
 use rustc_middle::traits::query::NoSolution;
+use rustc_middle::ty::relate::RelateRef;
 use rustc_middle::ty::relate::combine::{super_combine_consts, super_combine_tys};
 use rustc_middle::ty::{self, FnMutDelegate, Ty, TyCtxt, TypeVisitableExt};
 use rustc_middle::{bug, span_bug};
@@ -164,10 +165,10 @@ impl<'a, 'b, 'tcx> NllTypeRelating<'a, 'b, 'tcx> {
         f: impl FnOnce(&mut Self, T) -> U,
     ) -> U
     where
-        T: ty::TypeFoldable<TyCtxt<'tcx>> + Copy,
+        T: ty::TypeFoldable<TyCtxt<'tcx>>,
     {
-        let value = if let Some(inner) = binder.no_bound_vars() {
-            inner
+        let value = if let Some(inner) = binder.no_bound_vars_ref() {
+            inner.clone()
         } else {
             let infcx = self.type_checker.infcx;
             let mut lazy_universe = None;
@@ -207,10 +208,10 @@ impl<'a, 'b, 'tcx> NllTypeRelating<'a, 'b, 'tcx> {
     #[instrument(skip(self), level = "debug")]
     fn instantiate_binder_with_existentials<T>(&mut self, binder: ty::Binder<'tcx, T>) -> T
     where
-        T: ty::TypeFoldable<TyCtxt<'tcx>> + Copy,
+        T: ty::TypeFoldable<TyCtxt<'tcx>>,
     {
-        if let Some(inner) = binder.no_bound_vars() {
-            return inner;
+        if let Some(inner) = binder.no_bound_vars_ref() {
+            return inner.clone();
         }
 
         let infcx = self.type_checker.infcx;
@@ -310,14 +311,18 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
         info: ty::VarianceDiagInfo<TyCtxt<'tcx>>,
         a: T,
         b: T,
-    ) -> RelateResult<'tcx, T> {
+    ) -> RelateResult<'tcx, T::RelateResult> {
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         self.ambient_variance_info = self.ambient_variance_info.xform(info);
 
         debug!(?self.ambient_variance);
         // In a bivariant context this always succeeds.
-        let r = if self.ambient_variance == ty::Bivariant { Ok(a) } else { self.relate(a, b) };
+        let r = if self.ambient_variance == ty::Bivariant {
+            Ok(a.into_relate_result())
+        } else {
+            self.relate(a, b)
+        };
 
         self.ambient_variance = old_ambient_variance;
 
@@ -417,11 +422,11 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
     #[instrument(skip(self), level = "trace")]
     fn binders<T>(
         &mut self,
-        a: ty::Binder<'tcx, T>,
-        b: ty::Binder<'tcx, T>,
+        a: &ty::Binder<'tcx, T>,
+        b: &ty::Binder<'tcx, T>,
     ) -> RelateResult<'tcx, ty::Binder<'tcx, T>>
     where
-        T: Relate<TyCtxt<'tcx>>,
+        T: RelateRef<TyCtxt<'tcx>>,
     {
         // We want that
         //
@@ -444,10 +449,10 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
 
         debug!(?self.ambient_variance);
 
-        if let (Some(a), Some(b)) = (a.no_bound_vars(), b.no_bound_vars()) {
+        if let (Some(a), Some(b)) = (a.no_bound_vars_ref(), b.no_bound_vars_ref()) {
             // Fast path for the common case.
             self.relate(a, b)?;
-            return Ok(ty::Binder::dummy(a));
+            return Ok(ty::Binder::dummy(a.clone()));
         }
 
         match self.ambient_variance {
@@ -460,9 +465,9 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
 
                 // Note: the order here is important. Create the placeholders first, otherwise
                 // we assign the wrong universe to the existential!
-                self.enter_forall(b, |this, b| {
-                    let a = this.instantiate_binder_with_existentials(a);
-                    this.relate(a, b)
+                self.enter_forall(b.clone(), |this, b| {
+                    let a = this.instantiate_binder_with_existentials(a.clone());
+                    this.relate(&a, &b)
                 })?;
             }
 
@@ -475,9 +480,9 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
 
                 // Note: the order here is important. Create the placeholders first, otherwise
                 // we assign the wrong universe to the existential!
-                self.enter_forall(a, |this, a| {
-                    let b = this.instantiate_binder_with_existentials(b);
-                    this.relate(a, b)
+                self.enter_forall(a.clone(), |this, a| {
+                    let b = this.instantiate_binder_with_existentials(b.clone());
+                    this.relate(&a, &b)
                 })?;
             }
 
@@ -490,22 +495,22 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
 
                 // Note: the order here is important. Create the placeholders first, otherwise
                 // we assign the wrong universe to the existential!
-                self.enter_forall(b, |this, b| {
-                    let a = this.instantiate_binder_with_existentials(a);
-                    this.relate(a, b)
+                self.enter_forall(b.clone(), |this, b| {
+                    let a = this.instantiate_binder_with_existentials(a.clone());
+                    this.relate(&a, &b)
                 })?;
                 // Note: the order here is important. Create the placeholders first, otherwise
                 // we assign the wrong universe to the existential!
-                self.enter_forall(a, |this, a| {
-                    let b = this.instantiate_binder_with_existentials(b);
-                    this.relate(a, b)
+                self.enter_forall(a.clone(), |this, a| {
+                    let b = this.instantiate_binder_with_existentials(b.clone());
+                    this.relate(&a, &b)
                 })?;
             }
 
             ty::Bivariant => {}
         }
 
-        Ok(a)
+        Ok(a.clone())
     }
 }
 

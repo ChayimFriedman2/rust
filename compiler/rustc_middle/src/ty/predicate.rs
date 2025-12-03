@@ -46,20 +46,20 @@ pub struct Predicate<'tcx>(
 );
 
 impl<'tcx> rustc_type_ir::inherent::Predicate<TyCtxt<'tcx>> for Predicate<'tcx> {
-    fn as_clause(self) -> Option<ty::Clause<'tcx>> {
+    fn into_clause(self) -> Option<ty::Clause<'tcx>> {
         self.as_clause()
     }
 
-    fn allow_normalization(self) -> bool {
-        self.allow_normalization()
+    fn allow_normalization(&self) -> bool {
+        (*self).allow_normalization()
     }
 }
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Predicate<'tcx> {
+impl<'tcx> rustc_type_ir::inherent::AsKind for Predicate<'tcx> {
     type Kind = ty::Binder<'tcx, ty::PredicateKind<'tcx>>;
 
-    fn kind(self) -> Self::Kind {
-        self.kind()
+    fn kind(&self) -> &Self::Kind {
+        &self.0.internee
     }
 }
 
@@ -171,20 +171,19 @@ pub struct Clause<'tcx>(
 );
 
 impl<'tcx> rustc_type_ir::inherent::Clause<TyCtxt<'tcx>> for Clause<'tcx> {
-    fn as_predicate(self) -> Predicate<'tcx> {
+    fn into_predicate(self) -> Predicate<'tcx> {
         self.as_predicate()
     }
 
     fn instantiate_supertrait(self, tcx: TyCtxt<'tcx>, trait_ref: ty::PolyTraitRef<'tcx>) -> Self {
         self.instantiate_supertrait(tcx, trait_ref)
     }
-}
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Clause<'tcx> {
-    type Kind = ty::Binder<'tcx, ClauseKind<'tcx>>;
-
-    fn kind(self) -> Self::Kind {
-        self.kind()
+    fn kind(&self) -> ty::Binder<'tcx, &ClauseKind<'tcx>> {
+        self.0.internee.map_bound_ref(|kind| match kind {
+            PredicateKind::Clause(clause) => clause,
+            _ => unreachable!(),
+        })
     }
 }
 
@@ -269,22 +268,22 @@ pub type PolyExistentialPredicate<'tcx> = ty::Binder<'tcx, ExistentialPredicate<
 impl<'tcx> rustc_type_ir::inherent::BoundExistentialPredicates<TyCtxt<'tcx>>
     for &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>>
 {
-    fn principal_def_id(self) -> Option<DefId> {
-        self.principal_def_id()
+    fn principal_def_id(&self) -> Option<DefId> {
+        (*self).principal_def_id()
     }
 
-    fn principal(self) -> Option<ty::PolyExistentialTraitRef<'tcx>> {
-        self.principal()
+    fn principal(&self) -> Option<ty::PolyExistentialTraitRef<'tcx>> {
+        (*self).principal()
     }
 
-    fn auto_traits(self) -> impl IntoIterator<Item = DefId> {
-        self.auto_traits()
+    fn auto_traits(&self) -> impl IntoIterator<Item = DefId> {
+        (*self).auto_traits()
     }
 
     fn projection_bounds(
-        self,
+        &self,
     ) -> impl IntoIterator<Item = ty::Binder<'tcx, ExistentialProjection<'tcx>>> {
-        self.projection_bounds()
+        (*self).projection_bounds()
     }
 }
 

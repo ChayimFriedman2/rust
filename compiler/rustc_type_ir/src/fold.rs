@@ -397,7 +397,7 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
     }
 
     fn fold_region(&mut self, r: I::Region) -> I::Region {
-        match r.kind() {
+        match *r.kind() {
             ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), br)
                 if debruijn >= self.current_index =>
             {
@@ -409,7 +409,7 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
     }
 
     fn fold_ty(&mut self, ty: I::Ty) -> I::Ty {
-        match ty.kind() {
+        match *ty.kind() {
             ty::Bound(BoundVarIndexKind::Bound(debruijn), bound_ty)
                 if debruijn >= self.current_index =>
             {
@@ -423,7 +423,7 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
     }
 
     fn fold_const(&mut self, ct: I::Const) -> I::Const {
-        match ct.kind() {
+        match *ct.kind() {
             ty::ConstKind::Bound(ty::BoundVarIndexKind::Bound(debruijn), bound_ct)
                 if debruijn >= self.current_index =>
             {
@@ -440,7 +440,7 @@ impl<I: Interner> TypeFolder<I> for Shifter<I> {
 }
 
 pub fn shift_region<I: Interner>(cx: I, region: I::Region, amount: u32) -> I::Region {
-    match region.kind() {
+    match *region.kind() {
         ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), br) if amount > 0 => {
             Region::new_bound(cx, debruijn.shifted_in(amount), br)
         }
@@ -520,7 +520,7 @@ where
 
     #[instrument(skip(self), level = "debug", ret)]
     fn fold_region(&mut self, r: I::Region) -> I::Region {
-        match r.kind() {
+        match *r.kind() {
             ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), _)
                 if debruijn < self.current_index =>
             {

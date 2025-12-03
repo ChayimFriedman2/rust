@@ -19,13 +19,13 @@ pub trait SolverDelegate: Deref<Target = Self::Infcx> + Sized {
 
     fn compute_goal_fast_path(
         &self,
-        goal: Goal<Self::Interner, <Self::Interner as Interner>::Predicate>,
+        goal: &Goal<Self::Interner, <Self::Interner as Interner>::Predicate>,
         span: <Self::Interner as Interner>::Span,
     ) -> Option<Certainty>;
 
     fn fresh_var_for_kind_with_span(
         &self,
-        arg: <Self::Interner as Interner>::GenericArg,
+        arg: &<Self::Interner as Interner>::GenericArg,
         span: <Self::Interner as Interner>::Span,
     ) -> <Self::Interner as Interner>::GenericArg;
 
@@ -35,7 +35,7 @@ pub trait SolverDelegate: Deref<Target = Self::Infcx> + Sized {
     fn evaluate_const(
         &self,
         param_env: <Self::Interner as Interner>::ParamEnv,
-        uv: ty::UnevaluatedConst<Self::Interner>,
+        uv: &ty::UnevaluatedConst<Self::Interner>,
     ) -> Option<<Self::Interner as Interner>::Const>;
 
     // FIXME: This only is here because `wf::obligations` is in `rustc_trait_selection`!

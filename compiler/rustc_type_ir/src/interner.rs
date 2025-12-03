@@ -10,7 +10,7 @@ use crate::fold::TypeFoldable;
 use crate::inherent::*;
 use crate::ir_print::IrPrint;
 use crate::lang_items::{SolverAdtLangItem, SolverLangItem, SolverTraitLangItem};
-use crate::relate::Relate;
+use crate::relate::{Relate, RelateRef};
 use crate::solve::{CanonicalInput, Certainty, ExternalConstraintsData, QueryResult, inspect};
 use crate::visit::{Flags, TypeVisitable};
 use crate::{self as ty, CanonicalParamEnvCacheEntry, search_graph};
@@ -57,14 +57,16 @@ pub trait Interner:
     type Span: Span<Self>;
 
     type GenericArgs: GenericArgs<Self>;
-    type GenericArgsSlice: Copy + Debug + Hash + Eq + SliceLike<Item = Self::GenericArg>;
+    type GenericArgsSlice<'a>: Copy + Debug + Hash + Eq + SliceLike<Item = Self::GenericArg>
+    where
+        Self: 'a;
     type GenericArg: GenericArg<Self>;
     type Term: Term<Self>;
 
-    type BoundVarKinds: Copy + Debug + Hash + Eq + SliceLike<Item = Self::BoundVarKind> + Default;
+    type BoundVarKinds: Clone + Debug + Hash + Eq + SliceLike<Item = Self::BoundVarKind> + Default;
     type BoundVarKind: Copy + Debug + Hash + Eq;
 
-    type PredefinedOpaques: Copy
+    type PredefinedOpaques: Clone
         + Debug
         + Hash
         + Eq
@@ -75,7 +77,7 @@ pub trait Interner:
         data: &[(ty::OpaqueTypeKey<Self>, Self::Ty)],
     ) -> Self::PredefinedOpaques;
 
-    type LocalDefIds: Copy
+    type LocalDefIds: Clone
         + Debug
         + Hash
         + Default
@@ -83,7 +85,7 @@ pub trait Interner:
         + TypeVisitable<Self>
         + SliceLike<Item = Self::LocalDefId>;
 
-    type CanonicalVarKinds: Copy
+    type CanonicalVarKinds: Clone
         + Debug
         + Hash
         + Eq
@@ -94,7 +96,7 @@ pub trait Interner:
         kinds: &[ty::CanonicalVarKind<Self>],
     ) -> Self::CanonicalVarKinds;
 
-    type ExternalConstraints: Copy
+    type ExternalConstraints: Clone
         + Debug
         + Hash
         + Eq
@@ -112,13 +114,15 @@ pub trait Interner:
         data: T,
         dep_node: Self::DepNodeIndex,
     ) -> Self::Tracked<T>;
-    fn get_tracked<T: Debug + Clone>(self, tracked: &Self::Tracked<T>) -> T;
+    fn get_tracked<T: Debug + Clone>(self, tracked: &Self::Tracked<T>) -> &T;
     fn with_cached_task<T>(self, task: impl FnOnce() -> T) -> (T, Self::DepNodeIndex);
 
     // Kinds of tys
     type Ty: Ty<Self>;
     type Tys: Tys<Self>;
-    type FnInputTys: Copy + Debug + Hash + Eq + SliceLike<Item = Self::Ty> + TypeVisitable<Self>;
+    type FnInputTys<'a>: Copy + Debug + Hash + Eq + SliceLike<Item = Self::Ty> + TypeVisitable<Self>
+    where
+        Self: 'a;
     type ParamTy: ParamLike;
     type BoundTy: BoundVarLike<Self>;
     type PlaceholderTy: PlaceholderLike<Self, Bound = Self::BoundTy>;
@@ -128,15 +132,16 @@ pub trait Interner:
     type ErrorGuaranteed: Copy + Debug + Hash + Eq;
     type BoundExistentialPredicates: BoundExistentialPredicates<Self>;
     type AllocId: Copy + Debug + Hash + Eq;
-    type Pat: Copy
+    type Pat: Clone
         + Debug
         + Hash
         + Eq
         + Debug
-        + Relate<Self>
+        + RelateRef<Self>
+        + Relate<Self, RelateResult = Self::Pat>
         + Flags
-        + IntoKind<Kind = ty::PatternKind<Self>>;
-    type PatList: Copy
+        + AsKind<Kind = ty::PatternKind<Self>>;
+    type PatList: Clone
         + Debug
         + Hash
         + Default
@@ -153,7 +158,7 @@ pub trait Interner:
     type PlaceholderConst: PlaceholderConst<Self>;
     type ValueConst: ValueConst<Self>;
     type ExprConst: ExprConst<Self>;
-    type ValTree: Copy + Debug + Hash + Eq;
+    type ValTree: Clone + Debug + Hash + Eq;
 
     // Kinds of regions
     type Region: Region<Self>;
@@ -162,7 +167,7 @@ pub trait Interner:
     type BoundRegion: BoundVarLike<Self>;
     type PlaceholderRegion: PlaceholderLike<Self, Bound = Self::BoundRegion>;
 
-    type RegionAssumptions: Copy
+    type RegionAssumptions: Clone
         + Debug
         + Hash
         + Eq
@@ -193,8 +198,9 @@ pub trait Interner:
     type GenericsOf: GenericsOf<Self>;
     fn generics_of(self, def_id: Self::DefId) -> Self::GenericsOf;
 
-    type VariancesOf: Copy + Debug + SliceLike<Item = ty::Variance>;
+    type VariancesOf: Clone + Debug + SliceLike<Item = ty::Variance>;
     fn variances_of(self, def_id: Self::DefId) -> Self::VariancesOf;
+    fn variances_into_iter(variances: Self::VariancesOf) -> impl Iterator<Item = ty::Variance>;
 
     fn opt_alias_variances(
         self,
@@ -210,15 +216,15 @@ pub trait Interner:
     type AdtDef: AdtDef<Self>;
     fn adt_def(self, adt_def_id: Self::AdtId) -> Self::AdtDef;
 
-    fn alias_ty_kind(self, alias: ty::AliasTy<Self>) -> ty::AliasTyKind;
+    fn alias_ty_kind(self, alias: &ty::AliasTy<Self>) -> ty::AliasTyKind;
 
-    fn alias_term_kind(self, alias: ty::AliasTerm<Self>) -> ty::AliasTermKind;
+    fn alias_term_kind(self, alias: &ty::AliasTerm<Self>) -> ty::AliasTermKind;
 
-    fn trait_ref_and_own_args_for_alias(
+    fn trait_ref_and_own_args_for_alias<'a>(
         self,
         def_id: Self::DefId,
-        args: Self::GenericArgs,
-    ) -> (ty::TraitRef<Self>, Self::GenericArgsSlice);
+        args: &'a Self::GenericArgs,
+    ) -> (ty::TraitRef<Self>, Self::GenericArgsSlice<'a>);
 
     fn mk_args(self, args: &[Self::GenericArg]) -> Self::GenericArgs;
 
@@ -227,13 +233,17 @@ pub trait Interner:
         I: Iterator<Item = T>,
         T: CollectAndApply<Self::GenericArg, Self::GenericArgs>;
 
-    fn check_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgs) -> bool;
+    fn check_args_compatible(self, def_id: Self::DefId, args: &Self::GenericArgs) -> bool;
 
-    fn debug_assert_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgs);
+    fn debug_assert_args_compatible(self, def_id: Self::DefId, args: &Self::GenericArgs);
 
     /// Assert that the args from an `ExistentialTraitRef` or `ExistentialProjection`
     /// are compatible with the `DefId`.
-    fn debug_assert_existential_args_compatible(self, def_id: Self::DefId, args: Self::GenericArgs);
+    fn debug_assert_existential_args_compatible(
+        self,
+        def_id: Self::DefId,
+        args: &Self::GenericArgs,
+    );
 
     fn mk_type_list_from_iter<I, T>(self, args: I) -> T::Output
     where
@@ -568,7 +578,7 @@ impl<I: Interner> search_graph::Cx for I {
     ) -> I::Tracked<T> {
         I::mk_tracked(self, data, dep_node_index)
     }
-    fn get_tracked<T: Debug + Clone>(self, tracked: &I::Tracked<T>) -> T {
+    fn get_tracked<T: Debug + Clone>(self, tracked: &I::Tracked<T>) -> &T {
         I::get_tracked(self, tracked)
     }
     fn with_cached_task<T>(self, task: impl FnOnce() -> T) -> (T, I::DepNodeIndex) {

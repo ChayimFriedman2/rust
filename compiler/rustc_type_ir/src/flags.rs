@@ -165,7 +165,7 @@ impl<I: Interner> FlagComputation<I> {
         result
     }
 
-    pub fn for_predicate(binder: ty::Binder<I, ty::PredicateKind<I>>) -> FlagComputation<I> {
+    pub fn for_predicate(binder: &ty::Binder<I, ty::PredicateKind<I>>) -> FlagComputation<I> {
         let mut result = FlagComputation::new();
         result.add_predicate(binder);
         result
@@ -180,8 +180,9 @@ impl<I: Interner> FlagComputation<I> {
     pub fn for_clauses(clauses: &[I::Clause]) -> FlagComputation<I> {
         let mut result = FlagComputation::new();
         for c in clauses {
-            result.add_flags(c.as_predicate().flags());
-            result.add_exclusive_binder(c.as_predicate().outer_exclusive_binder());
+            let predicate = c.clone().into_predicate();
+            result.add_flags(predicate.flags());
+            result.add_exclusive_binder(predicate.outer_exclusive_binder());
         }
         result
     }
@@ -205,9 +206,9 @@ impl<I: Interner> FlagComputation<I> {
 
     /// Adds the flags/depth from a set of types that appear within the current type, but within a
     /// region binder.
-    fn bound_computation<T, F>(&mut self, value: ty::Binder<I, T>, f: F)
+    fn bound_computation<T, F>(&mut self, value: &ty::Binder<I, T>, f: F)
     where
-        F: FnOnce(&mut Self, T),
+        F: FnOnce(&mut Self, &T),
     {
         let mut computation = FlagComputation::new();
 
@@ -215,7 +216,7 @@ impl<I: Interner> FlagComputation<I> {
             computation.add_flags(TypeFlags::HAS_BINDER_VARS);
         }
 
-        f(&mut computation, value.skip_binder());
+        f(&mut computation, value.skip_binder_ref());
 
         self.add_flags(computation.flags);
 
@@ -246,13 +247,13 @@ impl<I: Interner> FlagComputation<I> {
                 self.add_flags(TypeFlags::HAS_TY_PARAM);
             }
 
-            ty::Closure(_, args)
-            | ty::CoroutineClosure(_, args)
-            | ty::CoroutineWitness(_, args) => {
+            ty::Closure(_, ref args)
+            | ty::CoroutineClosure(_, ref args)
+            | ty::CoroutineWitness(_, ref args) => {
                 self.add_args(args.as_slice());
             }
 
-            ty::Coroutine(_, args) => {
+            ty::Coroutine(_, ref args) => {
                 self.add_flags(TypeFlags::HAS_TY_CORO);
                 self.add_args(args.as_slice());
             }
@@ -281,11 +282,11 @@ impl<I: Interner> FlagComputation<I> {
                 }
             },
 
-            ty::Adt(_, args) => {
+            ty::Adt(_, ref args) => {
                 self.add_args(args.as_slice());
             }
 
-            ty::Alias(kind, data) => {
+            ty::Alias(kind, ref data) => {
                 self.add_flags(match kind {
                     ty::Projection => TypeFlags::HAS_TY_PROJECTION,
                     ty::Free => TypeFlags::HAS_TY_FREE_ALIAS,
@@ -296,8 +297,8 @@ impl<I: Interner> FlagComputation<I> {
                 self.add_alias_ty(data);
             }
 
-            ty::Dynamic(obj, r) => {
-                for predicate in obj.iter() {
+            ty::Dynamic(ref obj, ref r) => {
+                for predicate in obj.iter_ref() {
                     self.bound_computation(predicate, |computation, predicate| match predicate {
                         ty::ExistentialPredicate::Trait(tr) => {
                             computation.add_args(tr.args.as_slice())
@@ -312,57 +313,57 @@ impl<I: Interner> FlagComputation<I> {
                 self.add_region(r);
             }
 
-            ty::Array(tt, len) => {
+            ty::Array(ref tt, ref len) => {
                 self.add_ty(tt);
                 self.add_const(len);
             }
 
-            ty::Pat(ty, pat) => {
+            ty::Pat(ref ty, ref pat) => {
                 self.add_ty(ty);
                 self.add_ty_pat(pat);
             }
 
-            ty::Slice(tt) => self.add_ty(tt),
+            ty::Slice(ref tt) => self.add_ty(tt),
 
-            ty::RawPtr(ty, _) => {
+            ty::RawPtr(ref ty, _) => {
                 self.add_ty(ty);
             }
 
-            ty::Ref(r, ty, _) => {
+            ty::Ref(ref r, ref ty, _) => {
                 self.add_region(r);
                 self.add_ty(ty);
             }
 
-            ty::Tuple(types) => {
+            ty::Tuple(ref types) => {
                 self.add_tys(types);
             }
 
-            ty::FnDef(_, args) => {
+            ty::FnDef(_, ref args) => {
                 self.add_args(args.as_slice());
             }
 
-            ty::FnPtr(sig_tys, _) => self.bound_computation(sig_tys, |computation, sig_tys| {
-                computation.add_tys(sig_tys.inputs_and_output);
+            ty::FnPtr(ref sig_tys, _) => self.bound_computation(sig_tys, |computation, sig_tys| {
+                computation.add_tys(&sig_tys.inputs_and_output);
             }),
 
-            ty::UnsafeBinder(bound_ty) => {
-                self.bound_computation(bound_ty.into(), |computation, ty| {
+            ty::UnsafeBinder(ref bound_ty) => {
+                self.bound_computation(bound_ty, |computation, ty| {
                     computation.add_ty(ty);
                 })
             }
         }
     }
 
-    fn add_ty_pat(&mut self, pat: <I as Interner>::Pat) {
+    fn add_ty_pat(&mut self, pat: &<I as Interner>::Pat) {
         self.add_flags(pat.flags());
         self.add_exclusive_binder(pat.outer_exclusive_binder());
     }
 
-    fn add_predicate(&mut self, binder: ty::Binder<I, ty::PredicateKind<I>>) {
+    fn add_predicate(&mut self, binder: &ty::Binder<I, ty::PredicateKind<I>>) {
         self.bound_computation(binder, |computation, atom| computation.add_predicate_atom(atom));
     }
 
-    fn add_predicate_atom(&mut self, atom: ty::PredicateKind<I>) {
+    fn add_predicate_atom(&mut self, atom: &ty::PredicateKind<I>) {
         match atom {
             ty::PredicateKind::Clause(ty::ClauseKind::Trait(trait_pred)) => {
                 self.add_args(trait_pred.trait_ref.args.as_slice());
@@ -430,32 +431,32 @@ impl<I: Interner> FlagComputation<I> {
         }
     }
 
-    fn add_ty(&mut self, ty: I::Ty) {
+    fn add_ty(&mut self, ty: &I::Ty) {
         self.add_flags(ty.flags());
         self.add_exclusive_binder(ty.outer_exclusive_binder());
     }
 
-    fn add_tys(&mut self, tys: I::Tys) {
-        for ty in tys.iter() {
+    fn add_tys(&mut self, tys: &I::Tys) {
+        for ty in tys.iter_ref() {
             self.add_ty(ty);
         }
     }
 
-    fn add_region(&mut self, r: I::Region) {
+    fn add_region(&mut self, r: &I::Region) {
         self.add_flags(r.flags());
         if let ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), _) = r.kind() {
-            self.add_bound_var(debruijn);
+            self.add_bound_var(*debruijn);
         }
     }
 
-    fn add_const(&mut self, c: I::Const) {
+    fn add_const(&mut self, c: &I::Const) {
         self.add_flags(c.flags());
         self.add_exclusive_binder(c.outer_exclusive_binder());
     }
 
     fn add_const_kind(&mut self, c: &ty::ConstKind<I>) {
         match *c {
-            ty::ConstKind::Unevaluated(uv) => {
+            ty::ConstKind::Unevaluated(ref uv) => {
                 self.add_args(uv.args.as_slice());
                 self.add_flags(TypeFlags::HAS_CT_PROJECTION);
             }
@@ -477,42 +478,39 @@ impl<I: Interner> FlagComputation<I> {
             ty::ConstKind::Placeholder(_) => {
                 self.add_flags(TypeFlags::HAS_CT_PLACEHOLDER);
             }
-            ty::ConstKind::Value(cv) => self.add_ty(cv.ty()),
-            ty::ConstKind::Expr(e) => self.add_args(e.args().as_slice()),
+            ty::ConstKind::Value(ref cv) => self.add_ty(&cv.ty()),
+            ty::ConstKind::Expr(ref e) => self.add_args(e.args().as_slice()),
             ty::ConstKind::Error(_) => self.add_flags(TypeFlags::HAS_ERROR),
         }
     }
 
     fn add_existential_projection(&mut self, projection: &ty::ExistentialProjection<I>) {
         self.add_args(projection.args.as_slice());
-        match projection.term.kind() {
-            ty::TermKind::Ty(ty) => self.add_ty(ty),
-            ty::TermKind::Const(ct) => self.add_const(ct),
-        }
+        self.add_term(&projection.term);
     }
 
-    fn add_alias_ty(&mut self, alias_ty: ty::AliasTy<I>) {
+    fn add_alias_ty(&mut self, alias_ty: &ty::AliasTy<I>) {
         self.add_args(alias_ty.args.as_slice());
     }
 
-    fn add_alias_term(&mut self, alias_term: ty::AliasTerm<I>) {
+    fn add_alias_term(&mut self, alias_term: &ty::AliasTerm<I>) {
         self.add_args(alias_term.args.as_slice());
     }
 
     fn add_args(&mut self, args: &[I::GenericArg]) {
         for arg in args {
-            match arg.kind() {
-                ty::GenericArgKind::Type(ty) => self.add_ty(ty),
-                ty::GenericArgKind::Lifetime(lt) => self.add_region(lt),
-                ty::GenericArgKind::Const(ct) => self.add_const(ct),
+            match arg.clone().kind() {
+                ty::GenericArgKind::Type(ty) => self.add_ty(&ty),
+                ty::GenericArgKind::Lifetime(lt) => self.add_region(&lt),
+                ty::GenericArgKind::Const(ct) => self.add_const(&ct),
             }
         }
     }
 
-    fn add_term(&mut self, term: I::Term) {
-        match term.kind() {
-            ty::TermKind::Ty(ty) => self.add_ty(ty),
-            ty::TermKind::Const(ct) => self.add_const(ct),
+    fn add_term(&mut self, term: &I::Term) {
+        match term.clone().kind() {
+            ty::TermKind::Ty(ty) => self.add_ty(&ty),
+            ty::TermKind::Const(ct) => self.add_const(&ct),
         }
     }
 }

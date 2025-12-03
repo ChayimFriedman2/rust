@@ -5,14 +5,16 @@ use arrayvec::ArrayVec;
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
-use rustc_type_ir_macros::{Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic};
+use rustc_type_ir_macros::{
+    CopyWhereFields, Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic,
+};
 
 use crate::data_structures::HashMap;
 use crate::inherent::*;
 use crate::{self as ty, Interner, TypingMode, UniverseIndex};
 
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, V)]
-#[derive_where(Copy; I: Interner, V: Copy)]
+#[derive_where(Copy; I: Interner, V: Clone, Canonical<I, V>: Copy, TypingMode<I>: Copy)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -28,7 +30,7 @@ impl<I: Interner, V: Eq> Eq for CanonicalQueryInput<I, V> {}
 /// variables have been rewritten to "canonical vars". These are
 /// numbered starting from 0 in order of first appearance.
 #[derive_where(Clone, Hash, PartialEq, Debug; I: Interner, V)]
-#[derive_where(Copy; I: Interner, V: Copy)]
+#[derive(CopyWhereFields)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
@@ -214,12 +216,12 @@ impl<I: Interner> CanonicalVarKind<I> {
 /// vectors with the original values that were replaced by canonical
 /// variables. You will need to supply it later to instantiate the
 /// canonicalized query response.
-#[derive_where(Clone, Copy, Hash, PartialEq, Debug; I: Interner)]
+#[derive_where(Clone, Hash, PartialEq, Debug; I: Interner)]
 #[cfg_attr(
     feature = "nightly",
     derive(Encodable_NoContext, Decodable_NoContext, HashStable_NoContext)
 )]
-#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic)]
+#[derive(TypeVisitable_Generic, TypeFoldable_Generic, Lift_Generic, CopyWhereFields)]
 pub struct CanonicalVarValues<I: Interner> {
     pub var_values: I::GenericArgs,
 }
@@ -277,7 +279,7 @@ impl<I: Interner> CanonicalVarValues<I> {
 
     // Given a list of canonical variables, construct a set of values which are
     // the identity response.
-    pub fn make_identity(cx: I, infos: I::CanonicalVarKinds) -> CanonicalVarValues<I> {
+    pub fn make_identity(cx: I, infos: &I::CanonicalVarKinds) -> CanonicalVarValues<I> {
         CanonicalVarValues {
             var_values: cx.mk_args_from_iter(infos.iter().enumerate().map(
                 |(i, kind)| -> I::GenericArg {
@@ -341,13 +343,9 @@ impl<I: Interner> CanonicalVarValues<I> {
     pub fn len(&self) -> usize {
         self.var_values.len()
     }
-}
 
-impl<'a, I: Interner> IntoIterator for &'a CanonicalVarValues<I> {
-    type Item = I::GenericArg;
-    type IntoIter = <I::GenericArgs as SliceLike>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
+    #[inline]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = I::GenericArg> + ExactSizeIterator {
         self.var_values.iter()
     }
 }

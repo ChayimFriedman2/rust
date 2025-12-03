@@ -422,11 +422,11 @@ pub struct CReaderCacheKey {
 #[rustc_pass_by_value]
 pub struct Ty<'tcx>(Interned<'tcx, WithCachedTypeInfo<TyKind<'tcx>>>);
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Ty<'tcx> {
+impl<'tcx> rustc_type_ir::inherent::AsKind for Ty<'tcx> {
     type Kind = TyKind<'tcx>;
 
-    fn kind(self) -> TyKind<'tcx> {
-        *self.kind()
+    fn kind(&self) -> &TyKind<'tcx> {
+        (*self).kind()
     }
 }
 
@@ -1020,8 +1020,8 @@ pub struct ParamEnv<'tcx> {
 }
 
 impl<'tcx> rustc_type_ir::inherent::ParamEnv<TyCtxt<'tcx>> for ParamEnv<'tcx> {
-    fn caller_bounds(self) -> impl inherent::SliceLike<Item = ty::Clause<'tcx>> {
-        self.caller_bounds()
+    fn caller_bounds(&self) -> impl inherent::SliceLike<Item = ty::Clause<'tcx>> {
+        (*self).caller_bounds()
     }
 }
 

@@ -1,5 +1,5 @@
 use derive_where::derive_where;
-use rustc_type_ir_macros::{TypeFoldable_Generic, TypeVisitable_Generic};
+use rustc_type_ir_macros::{CopyWhereFields, TypeFoldable_Generic, TypeVisitable_Generic};
 
 use crate::solve::NoSolution;
 use crate::{self as ty, Interner};
@@ -18,8 +18,8 @@ impl<T> ExpectedFound<T> {
 }
 
 // Data structures used in type unification
-#[derive_where(Clone, Copy, PartialEq, Debug; I: Interner)]
-#[derive(TypeVisitable_Generic)]
+#[derive_where(Clone, PartialEq, Debug; I: Interner)]
+#[derive(TypeVisitable_Generic, CopyWhereFields)]
 #[cfg_attr(feature = "nightly", rustc_pass_by_value)]
 pub enum TypeError<I: Interner> {
     Mismatch,

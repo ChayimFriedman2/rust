@@ -27,11 +27,11 @@ rustc_data_structures::static_assert_size!(ConstKind<'_>, 24);
 #[rustc_pass_by_value]
 pub struct Const<'tcx>(pub(super) Interned<'tcx, WithCachedTypeInfo<ConstKind<'tcx>>>);
 
-impl<'tcx> rustc_type_ir::inherent::IntoKind for Const<'tcx> {
+impl<'tcx> rustc_type_ir::inherent::AsKind for Const<'tcx> {
     type Kind = ConstKind<'tcx>;
 
-    fn kind(self) -> ConstKind<'tcx> {
-        self.kind()
+    fn kind(&self) -> &ConstKind<'tcx> {
+        self.0.0
     }
 }
 
